@@ -34,6 +34,10 @@ try:
         TELEPORT_SECONDS,
     )
     from .particles_effect import PARTICLE_SECONDS, ParticleEffect
+    from .snap_effect import (
+        CHIME_SOUND_PATH, REBUILD_SECONDS, SNAP_SECONDS, SNAP_SOUND_PATH,
+        VOID_MESSAGES, SnapPoseRecognizer, SnapRebuildEffect, SnapVoidEffect,
+    )
     from .naruto_effect import (
         EFFECT_SECONDS, LOG_PATH, joined_hands_from_landmarks, landed_log_anchor,
         load_log, overlay_log, render_substitution, substitution_anchor,
@@ -48,6 +52,10 @@ except ImportError:
         TELEPORT_SECONDS,
     )
     from particles_effect import PARTICLE_SECONDS, ParticleEffect
+    from snap_effect import (
+        CHIME_SOUND_PATH, REBUILD_SECONDS, SNAP_SECONDS, SNAP_SOUND_PATH,
+        VOID_MESSAGES, SnapPoseRecognizer, SnapRebuildEffect, SnapVoidEffect,
+    )
     from naruto_effect import (
         EFFECT_SECONDS, LOG_PATH, joined_hands_from_landmarks, landed_log_anchor,
         load_log, overlay_log, render_substitution, substitution_anchor,
@@ -57,13 +65,14 @@ except ImportError:
 
 APP_DIR = Path(__file__).resolve().parent
 MODEL_DIR = APP_DIR / "models"
+SAVED_BG_PATH = APP_DIR / "assets" / "last_bg.png"
 WINDOW_NAME = "Webcam - Preview"
 
 SEGMENTER_MODEL = MODEL_DIR / "selfie_segmenter_landscape.tflite"
 GESTURE_MODEL = MODEL_DIR / "gesture_recognizer.task"
 HAND_MODEL = APP_DIR / "hand_landmarker.task"
 FACE_MODEL = MODEL_DIR / "blaze_face_short_range.tflite"
-ALL_MODES = ("normal", "naruto", "particles", "goku", "itachi")
+ALL_MODES = ("normal", "naruto", "particles", "goku", "itachi", "snap")
 # Firestore licenses the app/device, not individual effects. Report a known
 # value until the server rules are updated for newly added local modes.
 LICENSE_REPORTED_MODES = frozenset(("normal", "naruto", "particles", "goku"))
@@ -117,6 +126,7 @@ class AppState:
     last_gesture_check: float = 0.0
     fullscreen: bool = False
     gestures_paused: bool = False
+    show_help: bool = False
 
 
 def positive_fps(value: str) -> float:
@@ -168,6 +178,14 @@ def parse_args() -> argparse.Namespace:
         "--async-gestures", action="store_true",
         help="Run gesture recognition on a background thread so video stays at 30 FPS",
     )
+    parser.add_argument(
+        "--reuse-bg", action="store_true",
+        help="Reuse the last saved empty-room background on startup (0s calibration)",
+    )
+    parser.add_argument(
+        "--snap-text", type=str, default=None,
+        help="Custom excuse text for Snap mode (e.g. 'COFFEE BREAK')",
+    )
     parser.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
@@ -192,6 +210,7 @@ def choose_mode(available: tuple[str, ...] | None = None, check_license=None) ->
         "particles": ("PARTICLES", "V sign  /  wind particles"),
         "goku": ("GOKU", "Two fingers to forehead  /  custom hold time"),
         "itachi": ("ITACHI UCHIHA DISAPPEAR", "Hands on chest  /  flock of crows"),
+        "snap": ("SNAP VOID", "Snap fingers  /  vortex & BRB text"),
     }
     buttons = tuple(
         (mode, f"{index}  {labels[mode][0]}", labels[mode][1],
@@ -381,7 +400,7 @@ def send_virtual_frame(camera, frame: np.ndarray) -> None:
 def download_models(mode: str = "normal") -> None:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     for destination, url in MODEL_URLS.items():
-        if mode in ("naruto", "goku", "itachi") and destination == GESTURE_MODEL:
+        if mode in ("naruto", "goku", "itachi", "snap") and destination == GESTURE_MODEL:
             continue
         if mode != "goku" and destination == FACE_MODEL:
             continue
@@ -444,7 +463,7 @@ def open_camera(index: int, width: int, height: int) -> cv2.VideoCapture:
 
 def create_tasks(mode: str = "normal") -> tuple[
     vision.ImageSegmenter,
-    MultiViewGestureRecognizer | MultiViewHandLandmarker | GokuPoseRecognizer | ItachiPoseRecognizer,
+    MultiViewGestureRecognizer | MultiViewHandLandmarker | GokuPoseRecognizer | ItachiPoseRecognizer | SnapPoseRecognizer,
 ]:
     segmenter_options = vision.ImageSegmenterOptions(
         base_options=python.BaseOptions(model_asset_path=str(SEGMENTER_MODEL)),
@@ -487,6 +506,24 @@ def create_tasks(mode: str = "normal") -> tuple[
             segmenter.close()
             raise
         return segmenter, GokuPoseRecognizer(hands, face, fallback_hands)
+    if mode == "snap":
+        if not HAND_MODEL.is_file():
+            raise RuntimeError(f"Hand model not found: {HAND_MODEL}")
+        options = vision.HandLandmarkerOptions(
+            base_options=python.BaseOptions(model_asset_path=str(HAND_MODEL)),
+            running_mode=vision.RunningMode.VIDEO,
+            num_hands=2,
+            min_hand_detection_confidence=0.55,
+            min_hand_presence_confidence=0.55,
+            min_tracking_confidence=0.55,
+        )
+        segmenter = vision.ImageSegmenter.create_from_options(segmenter_options)
+        try:
+            hands = vision.HandLandmarker.create_from_options(options)
+        except Exception:
+            segmenter.close()
+            raise
+        return segmenter, SnapPoseRecognizer(hands)
     if mode in ("naruto", "itachi"):
         if not HAND_MODEL.is_file():
             raise RuntimeError(f"Hand model not found: {HAND_MODEL}")
@@ -887,6 +924,71 @@ def draw_preview_banner(
     return out
 
 
+def load_saved_background(width: int, height: int) -> np.ndarray | None:
+    if not SAVED_BG_PATH.is_file():
+        return None
+    img = cv2.imread(str(SAVED_BG_PATH))
+    if img is None or img.shape[:2] != (height, width):
+        return None
+    return img
+
+
+def save_background(background: np.ndarray) -> None:
+    try:
+        SAVED_BG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(SAVED_BG_PATH), background)
+    except OSError:
+        pass
+
+
+def draw_preview_hud(
+    frame: np.ndarray,
+    mode: str,
+    state: AppState,
+    snap_message: str = "",
+) -> np.ndarray:
+    """Draw a subtle bottom status pill and optional hotkey cheat sheet on preview only."""
+    out = frame.copy() if frame is not None else frame
+    h, w = out.shape[:2]
+    gesture_state = "PAUSED" if state.gestures_paused else "ON"
+    mode_tag = f"SNAP: {snap_message}" if mode == "snap" and snap_message else mode.upper()
+    pill = f"{mode_tag}  |  GESTURES {gesture_state}  |  [H] KEYS"
+    (tw, th), _ = cv2.getTextSize(pill, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+    pad_x, pad_y = 12, 8
+    x1, y2 = 14, h - 14
+    x2, y1 = min(w - 14, x1 + tw + pad_x * 2), max(14, y2 - th - pad_y * 2)
+    roi = out[y1:y2, x1:x2]
+    dark = np.full_like(roi, (20, 22, 26))
+    cv2.addWeighted(dark, 0.72, roi, 0.28, 0, roi)
+    cv2.putText(out, pill, (x1 + pad_x, y2 - pad_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (210, 222, 228), 1, cv2.LINE_AA)
+
+    if state.show_help:
+        lines = [
+            "HOTKEYS (Preview Window)",
+            "SPACE : Recapture empty room",
+            "B     : Load last saved room",
+            "G     : Pause / resume gestures",
+            "V / R : Manual vanish / reappear",
+            "T     : Cycle Snap excuse text",
+            "F     : Toggle fullscreen",
+            "H     : Hide this help",
+            "Q/ESC : Quit",
+        ]
+        box_w, box_h = min(w - 40, 360), 34 + len(lines) * 24
+        bx1 = (w - box_w) // 2
+        by1 = max(20, (h - box_h) // 2)
+        bx2, by2 = bx1 + box_w, min(h - 20, by1 + box_h)
+        panel = out[by1:by2, bx1:bx2]
+        bg = np.full_like(panel, (20, 22, 26))
+        cv2.addWeighted(bg, 0.84, panel, 0.16, 0, panel)
+        cv2.rectangle(out, (bx1, by1), (bx2, by2), (111, 142, 153), 1)
+        for i, line in enumerate(lines):
+            color = (0, 215, 255) if i == 0 else (225, 232, 238)
+            cv2.putText(out, line, (bx1 + 18, by1 + 28 + i * 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.50 if i == 0 else 0.46, color, 1, cv2.LINE_AA)
+    return out
+
+
 def set_fullscreen(enabled: bool) -> None:
     mode = cv2.WINDOW_FULLSCREEN if enabled else cv2.WINDOW_NORMAL
     cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, mode)
@@ -967,10 +1069,13 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     resources.callback(segmenter.close)
     resources.callback(recognizer.close)
     log_sprite = load_log() if mode == "naruto" else None
-    sound_path = {"naruto": SOUND_PATH, "goku": TELEPORT_SOUND_PATH}.get(mode)
+    sound_path = {"naruto": SOUND_PATH, "goku": TELEPORT_SOUND_PATH, "snap": SNAP_SOUND_PATH}.get(mode)
     vanish_sound = VanishSound(sound_path) if sound_path is not None else None
     if vanish_sound is not None:
         resources.callback(vanish_sound.close)
+    chime_sound = VanishSound(CHIME_SOUND_PATH) if mode == "snap" and CHIME_SOUND_PATH.is_file() else None
+    if chime_sound is not None:
+        resources.callback(chime_sound.close)
     resources.callback(cv2.destroyAllWindows)
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, args.width, args.height)
@@ -997,29 +1102,39 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     goku_delay = getattr(args,"goku_delay",HOLD_SECONDS)
     goku_gate = GokuGestureGate(hold_seconds=goku_delay) if mode == "goku" else None
     goku_countdown_remaining: float | None = None
+    snap_effect: SnapVoidEffect | None = None
+    snap_rebuild: SnapRebuildEffect | None = None
+    custom_snap_text = (getattr(args, "snap_text", None) or "").strip()
+    snap_messages = (custom_snap_text, *VOID_MESSAGES) if custom_snap_text else VOID_MESSAGES
+    snap_msg_idx = 0
+    snap_primed = False
+    snap_pos = (0, 0)
+    reused_bg_checked = False
     virtual_camera = None
     virtual_camera_initialized = False
     calibration_seconds = max(BACKGROUND_SAMPLE_SECONDS, getattr(args, "bg_delay", CALIBRATION_SECONDS))
     calibration_remaining = None
     bg_ready_until = 0.0
     last_gesture_report = 0.0
-    async_gestures = bool(getattr(args, "async_gestures", False)) and mode not in ("goku", "itachi")
+    async_gestures = bool(getattr(args, "async_gestures", False)) and mode not in ("goku", "itachi", "snap")
     gesture_executor = ThreadPoolExecutor(max_workers=1) if async_gestures else None
     if gesture_executor is not None:
         resources.callback(gesture_executor.shutdown, wait=True)
     gesture_future: Future | None = None
     started = time.perf_counter()
     print(f"[Webcam] Step out of frame for {calibration_seconds:g}s: capturing background (ENTER to capture now).")
+    print("[Webcam] Controls: H help, SPACE new background, B load saved room, G pause gestures, F fullscreen, Q quit.")
     if mode == "goku":
         print(f"[Webcam] Goku: hold two fingers together on your forehead for {goku_delay:g}s to vanish or reappear. "
               "Release the pose before repeating.")
-        print("[Webcam] Controls: SPACE new background, G pause gestures, F fullscreen, Q quit.")
     else:
-        print("[Webcam] Window controls: SPACE new background, "
-              "R reappear, V vanish, G pause gestures, F fullscreen, Q quit.")
+        print("[Webcam] Also: V vanish, R reappear.")
         if mode == "itachi":
             print("[Itachi] Touch both hands in front of the center of your chest. "
                   "Release and repeat to reappear.")
+        elif mode == "snap":
+            print(f"[Snap] Pinch thumb + middle finger then snap to vanish (message: {snap_messages[0]}).")
+            print("[Snap] Show a peace sign (or press R) to rebuild. Press T to cycle excuse message.")
 
     try:
         while True:
@@ -1038,6 +1153,15 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 virtual_camera_initialized = True
                 if virtual_camera is not None:
                     resources.callback(virtual_camera.close)
+            if not reused_bg_checked:
+                reused_bg_checked = True
+                if getattr(args, "reuse_bg", False) and background is None:
+                    saved = load_saved_background(width, height)
+                    if saved is not None:
+                        background = saved
+                        state.phase = "ready"
+                        bg_ready_until = time.perf_counter() + 1.5
+                        print("[Webcam] Loaded saved background (press SPACE to recapture).")
             if mode == "normal" and (dissolve_field is None or dissolve_field.shape != (height, width)):
                 dissolve_field, sparkle_noise = make_dissolve_fields(height, width)
             now = time.perf_counter()
@@ -1106,6 +1230,38 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 elif goku_gate.hold_started is None:
                     goku_countdown_remaining = None
 
+            if (mode == "snap" and background is not None
+                    and not state.gestures_paused
+                    and state.phase in ("ready", "vanished")
+                    and now - state.last_gesture_check >= 0.05):
+                state.last_gesture_check = now
+                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                if state.phase == "ready":
+                    snapped, snap_primed, snap_pos = recognizer.detect_snap(mp_image, elapsed_ms, width, height)
+                    if snapped:
+                        mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                        msg = snap_messages[snap_msg_idx % len(snap_messages)]
+                        snap_effect = SnapVoidEffect(
+                            camera_frame, mask, snap_pos, message=msg,
+                            on_assemble=chime_sound.play if chime_sound is not None else None,
+                        )
+                        if vanish_sound is not None:
+                            vanish_sound.play()
+                        state.phase = "snap_vanishing"
+                        state.vanish_started = time.perf_counter()
+                        vanished_frame = None
+                else:
+                    snap_primed = False
+                    if recognizer.detect_peace_sign(mp_image, elapsed_ms):
+                        mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                        snap_rebuild = SnapRebuildEffect(mask, width, height)
+                        if chime_sound is not None:
+                            chime_sound.play()
+                        state.phase = "snap_rebuilding"
+                        state.vanish_started = time.perf_counter()
+                        vanished_frame = None
+
             if state.phase == "calibrating":
                 elapsed = now - state.calibration_started
                 remaining = max(0, int(np.ceil(calibration_seconds - elapsed)))
@@ -1123,6 +1279,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     background_samples.clear()
                     state.phase = "ready"
                     bg_ready_until = now + 1.8
+                    save_background(background)
                     print("[Webcam] Background ready. You can step back into frame.")
                 display = camera_frame
 
@@ -1147,6 +1304,24 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     state.phase = "ready" if appearing else "vanished"
                     vanished_frame = None if appearing else display
                     itachi_effect = None
+
+            elif mode == "snap" and state.phase == "snap_vanishing":
+                age = max(0.0, time.perf_counter() - state.vanish_started)
+                display = snap_effect.render(background, age)
+                if age >= SNAP_SECONDS:
+                    state.phase = "vanished"
+                    vanished_frame = background.copy()
+                    snap_effect = None
+
+            elif mode == "snap" and state.phase == "snap_rebuilding":
+                age = max(0.0, time.perf_counter() - state.vanish_started)
+                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                display = snap_rebuild.render(camera_frame, background, mask, age)
+                if age >= REBUILD_SECONDS:
+                    state.phase = "ready"
+                    snap_rebuild = None
 
             elif state.phase == "vanished":
                 if vanished_frame is None:
@@ -1272,14 +1447,14 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     preview_display = draw_preview_banner(
                         display,
                         f"STEP OUT OF FRAME: {left}s",
-                        "ENTER: capture now  |  SPACE: restart countdown",
+                        "ENTER: capture now  |  B: load saved room  |  SPACE: restart",
                         accent=(0, 200, 255),
                     )
             elif now < bg_ready_until:
                 preview_display = draw_preview_banner(
                     display,
                     "BACKGROUND READY! Step back in",
-                    "Press SPACE anytime to recapture",
+                    "Saved for --reuse-bg  |  SPACE to recapture",
                     accent=(80, 220, 140),
                 )
             elif state.gestures_paused:
@@ -1289,6 +1464,18 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     "Press G to resume gesture detection",
                     accent=(120, 165, 255),
                 )
+            elif mode == "snap" and state.phase == "ready" and snap_primed:
+                preview_display = display.copy()
+                pulse = np.sin(now * 12.0)
+                r = 22 + int(5 * pulse)
+                cv2.circle(preview_display, snap_pos, r + 9, (0, 90, 160), 2)
+                cv2.circle(preview_display, snap_pos, r, (0, 200, 255), 2)
+                cv2.circle(preview_display, snap_pos, 6, (0, 255, 255), -1)
+                cv2.putText(preview_display, "READY TO SNAP!", (max(10, snap_pos[0] - 70), max(30, snap_pos[1] - 40)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+            if state.phase != "calibrating":
+                active_snap_msg = snap_messages[snap_msg_idx % len(snap_messages)] if mode == "snap" else ""
+                preview_display = draw_preview_hud(preview_display, mode, state, active_snap_msg)
             cv2.imshow(WINDOW_NAME, preview_display)
 
             key = cv2.waitKey(1) & 0xFF
@@ -1316,11 +1503,41 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 if goku_gate is not None:
                     goku_gate.reset()
                     goku_countdown_remaining = None
+                snap_effect = None
+                snap_rebuild = None
+                snap_primed = False
+                if mode == "snap":
+                    recognizer.reset()
                 background_samples.clear()
                 calibration_remaining = None
                 print(f"[Webcam] Step out of frame for {calibration_seconds:g}s: capturing new background.")
+            elif key == ord("t") and mode == "snap":
+                snap_msg_idx = (snap_msg_idx + 1) % len(snap_messages)
+                print(f"[Snap] Excuse message: {snap_messages[snap_msg_idx]}")
+            elif key == ord("b"):
+                saved = load_saved_background(width, height)
+                if saved is not None:
+                    background = saved
+                    background_samples.clear()
+                    state.phase = "ready"
+                    state.vanish_started = None
+                    vanished_frame = None
+                    bg_ready_until = now + 1.5
+                    print("[Webcam] Loaded saved background.")
+                else:
+                    print("[Webcam] No matching saved background found (capture one with SPACE first).")
             elif key == ord("r"):
-                if background is not None and mode == "itachi" and state.phase == "vanished":
+                if background is not None and mode == "snap" and state.phase == "vanished":
+                    rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
+                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                    mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                    snap_rebuild = SnapRebuildEffect(mask, width, height)
+                    if chime_sound is not None:
+                        chime_sound.play()
+                    state.phase = "snap_rebuilding"
+                    state.vanish_started = time.perf_counter()
+                    vanished_frame = None
+                elif background is not None and mode == "itachi" and state.phase == "vanished":
                     rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
                     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                     mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
@@ -1340,6 +1557,20 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     last_mask = None
                     last_mask_at = float("-inf")
                     particle_effect = None
+            elif key == ord("v") and background is not None and mode == "snap" and state.phase == "ready":
+                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                msg = snap_messages[snap_msg_idx % len(snap_messages)]
+                snap_effect = SnapVoidEffect(
+                    camera_frame, mask, (width // 2, height // 2), message=msg,
+                    on_assemble=chime_sound.play if chime_sound is not None else None,
+                )
+                if vanish_sound is not None:
+                    vanish_sound.play()
+                state.phase = "snap_vanishing"
+                state.vanish_started = time.perf_counter()
+                vanished_frame = None
             elif key == ord("v") and background is not None and mode == "itachi" and state.phase == "ready":
                 rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
@@ -1370,6 +1601,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     print("[Webcam] Gesture recognition paused (press G to resume).")
                 else:
                     print("[Webcam] Gesture recognition active.")
+            elif key == ord("h"):
+                state.show_help = not state.show_help
             elif key == ord("f"):
                 state.fullscreen = not state.fullscreen
                 set_fullscreen(state.fullscreen)

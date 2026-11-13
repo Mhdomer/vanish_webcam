@@ -14,6 +14,9 @@ __pycache__/
 *.[mM][dD]
 !/README.md
 
+# Local saved room background (never commit personal room photo).
+/assets/last_bg.png
+
 # Local Firebase administrator credentials and environment files.
 /license_config.json
 /vanishcam-licenses-*.json
