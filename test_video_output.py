@@ -294,10 +294,10 @@ class VideoLoopTests(unittest.TestCase):
         countdown = [call.args[0] for call in printed.call_args_list
                      if call.args and call.args[0].startswith("[Goku] ")]
         self.assertEqual(countdown, [
-            "[Goku] Sparizione tra 1...",
-            "[Goku] Sparizione!",
-            "[Goku] Riapparizione tra 1...",
-            "[Goku] Riapparizione!",
+            "[Goku] Vanishing in 1...",
+            "[Goku] Vanishing!",
+            "[Goku] Reappearing in 1...",
+            "[Goku] Reappearing!",
         ])
         np.testing.assert_array_equal(displayed[2], frames[2])
         np.testing.assert_array_equal(displayed[14], frames[1])
