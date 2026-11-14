@@ -78,39 +78,50 @@ Useful launch options:
 - **Smooth Animated Reappear:** Reappearing (`R`, `vanish-cam reappear`, or `vanish-cam action`) plays a smooth 0.85s cubic-ease crossfade + sound in `naruto`, `normal`, and `particles` modes, and triggers the particle/crow/teleport return animations in `snap`, `itachi`, and `goku` modes.
 - **Saved Background (`--reuse-bg` / `B`):** Automatically saves your clean room background locally to `assets/last_bg.png` (git-ignored) so you can start future meetings in 0 seconds.
 - **Gesture Pause (`G`):** Toggles gesture detection on/off so talking with your hands never triggers an accidental vanish mid-sentence.
-- **Remote CLI (`vanish-cam`) & Plugin-Ready JSON IPC:** Control a running session without focusing the preview window using `./vanish-cam` (`~/.local/bin/vanish-cam`), backed by `/tmp/vanish_cam.state.json` and `/tmp/vanish_cam.cmd` for Wayland compositors (Niri) and status bar plugins (Noctalia / Waybar).
+- **Remote CLI (`vanish-cam`), Live Mode Hot-Swap & Noctalia v4 Plugin:** Control a running session without focusing the preview window using `./vanish-cam` (`~/.local/bin/vanish-cam`) or the bundled **Noctalia v4 Bar & Panel plugin** (`noctalia-plugin/`), backed by `/tmp/vanish_cam.state.json` and `/tmp/vanish_cam.cmd`. Switch modes on the fly (`vanish-cam mode snap` or keys `1` to `6`) with zero camera restart or frame drop, and hide/show the preview window (`vanish-cam preview` or `P` key) anytime.
 
 ---
 
-## Remote Control CLI (`vanish-cam`) & JSON IPC
+## Remote Control CLI (`vanish-cam`), Noctalia Plugin & JSON IPC
 
-You can start, stop, or control VanishCam from any terminal, launcher, or Wayland hotkey while your browser or meeting window stays focused:
+You can start, stop, or control VanishCam from any terminal, launcher, Wayland hotkey, or the **Noctalia Shell bar widget** (`noctalia-plugin/`) while your browser or meeting window stays focused:
 
 ```bash
-vanish-cam start --mode snap        # Start in background (uses saved room frame if present)
+vanish-cam start --mode snap        # Start in foreground
+vanish-cam bg --mode snap           # Start in background (uses saved room frame if present)
 vanish-cam stop                     # Stop running instance cleanly
 vanish-cam toggle --mode snap       # Start if off, stop if running
+vanish-cam mode naruto              # Hot-swap effect mode live (snap, naruto, normal, particles, itachi, goku)
 vanish-cam action                   # Smart toggle: vanish if visible, reappear if vanished
 vanish-cam vanish                   # Trigger vanish effect immediately
 vanish-cam reappear                 # Smoothly reappear / rebuild immediately
 vanish-cam pause                    # Toggle gesture detection (ON <-> PAUSED)
+vanish-cam preview                  # Show / hide the local preview window on demand
 vanish-cam recapture                # Start room background recapture countdown
 vanish-cam load-bg                  # Load saved room background (assets/last_bg.png)
 vanish-cam next-text                # Cycle Snap mode excuse text
+vanish-cam snap-text "COFFEE BREAK" # Set custom Snap mode excuse text live
 vanish-cam menu                     # Toggle the local H control menu
-vanish-cam status                   # Human-readable status + desktop notification
+vanish-cam status                   # Human-readable status
 vanish-cam status --json            # Machine-readable JSON for Noctalia / Waybar plugins
 ```
 
-### IPC Files (For Future Noctalia / Bar Plugins)
-- **Live State (`/tmp/vanish_cam.state.json`):** Updated atomically (`running`, `pid`, `mode`, `phase`, `gestures_paused`, `snap_message`, `updated_at`).
-- **Command Queue (`/tmp/vanish_cam.cmd`):** Append any command (`vanish`, `reappear`, `action`, `pause`, `recapture`, `load-bg`, `next-text`, `help`, `quit`) and the main loop consumes it on the next frame (~33 ms).
+### Noctalia v4 Shell Plugin (`noctalia-plugin/`)
+Symlink `noctalia-plugin/` to `~/.config/noctalia/plugins/vanish-cam` and enable `"vanish-cam"` in `~/.config/noctalia/plugins.json`.
+- **Top Bar Capsule (`BarWidget.qml`):** Color-coded status (`OFF`, `LIVE`, `PAUSED`, `VANISHED`). Left-click opens the control panel, middle-click triggers smart vanish/reappear, right-click opens quick actions.
+- **Dropdown Studio Panel (`Panel.qml`):** Start/stop toggle, primary Vanish/Reappear button, Pause Gestures, Show/Hide Preview, 6-mode live hot-swap grid, Snap Void excuse picker, and room background controls.
+
+### IPC Files
+- **Live State (`/tmp/vanish_cam.state.json`):** Updated atomically (`running`, `pid`, `mode`, `phase`, `gestures_paused`, `preview_visible`, `snap_message`, `updated_at`).
+- **Command Queue (`/tmp/vanish_cam.cmd`):** Append any command (`vanish`, `reappear`, `toggle-action`, `pause`, `preview`, `mode:<name>`, `snap-text:<text>`, `recapture`, `load-bg`, `next-text`, `help`, `quit`) and the main loop consumes it on the next frame (~33 ms).
 
 ---
 
 ## Controls (Preview Window Focused or Clickable via `H` Menu)
 
 - `H` (or click `[H] MENU` pill): Toggle interactive clickable local control menu
+- `1` to `6`: Live hot-swap mode (`1` Snap, `2` Naruto, `3` Normal, `4` Particles, `5` Itachi, `6` Goku)
+- `P`: Hide / show local preview window (use `vanish-cam preview` to bring it back)
 - `SPACE`: Recapture empty room background (`ENTER` during countdown captures immediately)
 - `B`: Load last saved room background (`assets/last_bg.png`)
 - `G`: Pause / resume gesture detection

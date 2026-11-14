@@ -56,8 +56,16 @@ case "$cmd" in
             "$0" bg "$@"
         fi
         ;;
-    vanish|reappear|pause|recapture|load-bg|next-text|fullscreen)
+    vanish|reappear|pause|recapture|load-bg|next-text|fullscreen|preview)
         send_cmd "$cmd"
+        ;;
+    mode)
+        [[ $# -ge 1 ]] || { echo "Usage: vanish-cam mode <snap|naruto|normal|particles|itachi|goku>" >&2; exit 1; }
+        if is_running; then
+            send_cmd "mode:$1"
+        else
+            "$0" bg --mode "$1"
+        fi
         ;;
     action|toggle-action)
         send_cmd "toggle-action"
@@ -72,7 +80,7 @@ case "$cmd" in
     status)
         if ! is_running; then
             if [[ "${1:-}" == "--json" ]]; then
-                echo '{"running":false,"phase":"off","mode":"","gestures_paused":false,"snap_message":""}'
+                echo '{"running":false,"phase":"off","mode":"","gestures_paused":false,"preview_visible":false,"snap_message":""}'
             else
                 echo "VanishCam: off"
             fi
@@ -89,8 +97,9 @@ d = json.load(open(sys.argv[1]))
 mode = d.get("mode", "?")
 phase = d.get("phase", "?")
 paused = "paused" if d.get("gestures_paused") else "active"
+preview = "shown" if d.get("preview_visible", True) else "hidden"
 extra = f" | text=\"{d.get(\"snap_message\")}\"" if d.get("snap_message") else ""
-print(f"VanishCam: running (pid={d.get(\"pid\")}) | mode={mode} | phase={phase} | gestures={paused}{extra}")
+print(f"VanishCam: running (pid={d.get(\"pid\")}) | mode={mode} | phase={phase} | gestures={paused} | preview={preview}{extra}")
 ' "$STATE_FILE"
             fi
         else
@@ -106,10 +115,12 @@ Commands:
   bg [args]             Start VanishCam in background with --reuse-bg
   stop                  Stop running VanishCam instance
   toggle [args]         Toggle VanishCam on/off
+  mode <name>           Switch mode live without restarting camera (snap, naruto, normal, particles, itachi, goku)
   action                Vanish if ready, or reappear if vanished
   vanish                Trigger vanish effect now
   reappear              Reappear smoothly now
   pause                 Pause / resume gesture recognition
+  preview               Show / hide the local preview window
   recapture             Start empty-room background countdown
   load-bg               Reload last saved room background
   next-text             Cycle Snap mode excuse message
