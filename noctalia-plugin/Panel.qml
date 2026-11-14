@@ -16,8 +16,9 @@ Item {
     readonly property var mainInstance: pluginApi ? pluginApi.mainInstance : null
 
     property bool panelReady: true
+    property bool showGuide: false
     property real contentPreferredWidth: 420 * Style.uiScaleRatio
-    property real contentPreferredHeight: 625 * Style.uiScaleRatio
+    property real contentPreferredHeight: (root.showGuide ? 810 : 625) * Style.uiScaleRatio
 
     readonly property bool camRunning: mainInstance ? mainInstance.camRunning : false
     readonly property bool startingUp: mainInstance ? mainInstance.startingUp : false
@@ -34,13 +35,20 @@ Item {
     readonly property bool isVanished: camRunning && (camPhase === "vanished" || camPhase.indexOf("vanish") !== -1 || camPhase.indexOf("disappear") !== -1)
 
     readonly property var modesModel: [
-        { id: "snap", label: "Snap Void" },
-        { id: "naruto", label: "Naruto Log" },
-        { id: "normal", label: "Dissolve" },
-        { id: "particles", label: "Particles" },
-        { id: "itachi", label: "Itachi Crows" },
-        { id: "goku", label: "Goku Teleport" }
+        { id: "snap", label: "Snap Void", vanishHint: "Pinch & snap", reappearHint: "Peace sign / R" },
+        { id: "naruto", label: "Naruto Log", vanishHint: "Join both hands", reappearHint: "Button / R" },
+        { id: "normal", label: "Dissolve", vanishHint: "Peace sign", reappearHint: "Button / R" },
+        { id: "particles", label: "Particles", vanishHint: "Peace sign", reappearHint: "Button / R" },
+        { id: "itachi", label: "Itachi Crows", vanishHint: "Hands at chest", reappearHint: "Hands at chest / R" },
+        { id: "goku", label: "Goku Teleport", vanishHint: "Forehead 1s", reappearHint: "Forehead 1s / R" }
     ]
+
+    readonly property var activeModeInfo: {
+        for (let i = 0; i < modesModel.length; i++) {
+            if (modesModel[i].id === root.camMode) return modesModel[i];
+        }
+        return modesModel[0];
+    }
 
     readonly property var excusesModel: [
         "BRB...",
@@ -113,6 +121,17 @@ Item {
                         }
                     }
 
+                    NIconButton {
+                        icon: "question-mark"
+                        tooltipText: root.showGuide ? "Hide Gesture Guide" : "Gesture Guide"
+                        Layout.alignment: Qt.AlignVCenter
+                        colorBg: root.showGuide ? Color.mPrimary : Color.mSurface
+                        colorFg: root.showGuide ? Color.mOnPrimary : Color.mOnSurface
+                        colorBgHover: Color.mPrimary
+                        colorFgHover: Color.mOnPrimary
+                        onClicked: root.showGuide = !root.showGuide
+                    }
+
                     NButton {
                         text: root.camRunning ? "Stop" : "Start"
                         outlined: false
@@ -120,6 +139,82 @@ Item {
                         textColor: root.camRunning ? Color.mOnError : Color.mOnPrimary
                         onClicked: {
                             if (mainInstance) mainInstance.togglePower();
+                        }
+                    }
+                }
+            }
+
+            // 1b. Compact Collapsible Gesture Guide
+            NBox {
+                visible: root.showGuide
+                Layout.fillWidth: true
+                implicitHeight: guideCol.implicitHeight + Style.marginM * 2
+                color: Color.mSurfaceVariant
+
+                ColumnLayout {
+                    id: guideCol
+                    anchors.fill: parent
+                    anchors.margins: Style.marginM
+                    spacing: Style.marginXS
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        NText {
+                            text: "Gesture Guide"
+                            pointSize: Style.fontSizeS
+                            font.bold: true
+                            color: Color.mOnSurface
+                            Layout.fillWidth: true
+                        }
+                        NText {
+                            text: root.activeModeInfo.label
+                            pointSize: Style.fontSizeXS
+                            font.bold: true
+                            color: Color.mPrimary
+                        }
+                    }
+
+                    Repeater {
+                        model: root.modesModel
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property bool isActive: modelData.id === root.camMode
+                            Layout.fillWidth: true
+                            implicitHeight: guideRow.implicitHeight + 8
+                            radius: Style.radiusS
+                            color: isActive ? Qt.alpha(Color.mPrimary, 0.16) : Color.mSurface
+                            border.color: isActive ? Qt.alpha(Color.mPrimary, 0.45) : "transparent"
+                            border.width: 1
+
+                            RowLayout {
+                                id: guideRow
+                                anchors.fill: parent
+                                anchors.leftMargin: Style.marginS
+                                anchors.rightMargin: Style.marginS
+                                spacing: Style.marginXS
+
+                                NText {
+                                    text: modelData.label
+                                    pointSize: Style.fontSizeXS
+                                    font.bold: isActive
+                                    color: isActive ? Color.mPrimary : Color.mOnSurface
+                                    Layout.preferredWidth: 88 * Style.uiScaleRatio
+                                }
+                                NText {
+                                    text: modelData.vanishHint
+                                    pointSize: Style.fontSizeXS
+                                    color: Color.mOnSurfaceVariant
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                NText {
+                                    text: "↺ " + modelData.reappearHint
+                                    pointSize: Style.fontSizeXS
+                                    color: isActive ? Color.mSecondary : Color.mOnSurfaceVariant
+                                    horizontalAlignment: Text.AlignRight
+                                    Layout.preferredWidth: 108 * Style.uiScaleRatio
+                                }
+                            }
                         }
                     }
                 }
@@ -306,7 +401,7 @@ Item {
                         TextField {
                             id: customExcuseField
                             Layout.fillWidth: true
-                            placeholderText: "Type custom excuse (e.g. COFFEE BREAK)..."
+                            placeholderText: ""
                             color: Color.mOnSurface
                             placeholderTextColor: Color.mOnSurfaceVariant
                             font.pointSize: Style.fontSizeXS
