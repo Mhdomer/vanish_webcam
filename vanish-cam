@@ -68,7 +68,11 @@ case "$cmd" in
         fi
         ;;
     action|toggle-action)
-        send_cmd "toggle-action"
+        if is_running; then
+            send_cmd "toggle-action"
+        else
+            "$0" bg "$@"
+        fi
         ;;
     menu|help-overlay)
         send_cmd "help"

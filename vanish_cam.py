@@ -6,6 +6,8 @@ import argparse
 import json
 import os
 import platform
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -611,6 +613,38 @@ def make_dissolve_fields(height: int, width: int) -> tuple[np.ndarray, np.ndarra
         + np.sin(x_normal * 18.0) * 0.025
     )
     return np.clip(field, 0.0, 1.0), fine_noise
+
+
+def to_gesture_mp_image(frame: np.ndarray, max_width: int = 640) -> mp.Image:
+    """Convert a BGR frame to an RGB MediaPipe Image, downscaling large frames to cut gesture CPU."""
+    h, w = frame.shape[:2]
+    if w > max_width:
+        scale = max_width / float(w)
+        small = cv2.resize(
+            frame,
+            (max_width, max(1, int(round(h * scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+    else:
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+
+def notify_desktop(summary: str, body: str) -> None:
+    """Send a non-blocking desktop notification on Linux when running headless."""
+    notify_bin = shutil.which("notify-send")
+    if not notify_bin:
+        return
+    try:
+        subprocess.Popen(
+            [notify_bin, "-a", "VanishCam", "-t", "2800", summary, body],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
 
 
 def person_mask(
@@ -1427,8 +1461,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     and state.phase in ("ready", "vanished")
                     and now - state.last_gesture_check >= 0.09):
                 state.last_gesture_check = now
-                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mp_image = to_gesture_mp_image(camera_frame)
                 mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                 last_mask, last_mask_at = mask, now
                 touching = recognizer.recognize_pose(mp_image, elapsed_ms, mask)
@@ -1453,8 +1486,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     and state.phase in ("ready", "vanished")
                     and now - state.last_gesture_check >= 0.10):
                 state.last_gesture_check = now
-                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mp_image = to_gesture_mp_image(camera_frame)
                 pose = recognizer.recognize_pose(mp_image, elapsed_ms)
                 if args.gesture_debug and now - last_gesture_report >= 1.0:
                     held = 0.0 if goku_gate.hold_started is None else now - goku_gate.hold_started
@@ -1489,8 +1521,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     and state.phase in ("ready", "vanished")
                     and now - state.last_gesture_check >= snap_interval):
                 state.last_gesture_check = now
-                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mp_image = to_gesture_mp_image(camera_frame)
                 if state.phase == "ready":
                     snapped, snap_primed, snap_pos = recognizer.detect_snap(mp_image, elapsed_ms, width, height)
                     if snapped:
@@ -1535,6 +1566,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     bg_ready_until = now + 1.8
                     save_background(background)
                     print("[Webcam] Background ready. You can step back into frame.")
+                    if not state.preview_visible:
+                        notify_desktop("VanishCam", "Empty room captured! You can step back in.")
                 display = camera_frame
 
             elif background is None:
@@ -1628,8 +1661,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     (0.08 if mode == "naruto" else GESTURE_INTERVAL_SECONDS)
                 ):
                     state.last_gesture_check = now
-                    rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                    mp_image = to_gesture_mp_image(camera_frame)
                     if gesture_executor is not None:
                         fn = recognizer.recognize_joined_hands if mode == "naruto" else recognize_gesture
                         fn_args = (mp_image, elapsed_ms) if mode == "naruto" else (recognizer, mp_image, elapsed_ms)
@@ -1879,6 +1911,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 background_samples.clear()
                 calibration_remaining = None
                 print(f"[Webcam] Step out of frame for {calibration_seconds:g}s: capturing new background.")
+                if not state.preview_visible:
+                    notify_desktop("VanishCam", f"Step out of frame ({calibration_seconds:g}s) to capture empty room.")
             elif key == ord("t") and mode == "snap":
                 snap_msg_idx = (snap_msg_idx + 1) % len(snap_messages)
                 print(f"[Snap] Excuse message: {snap_messages[snap_msg_idx]}")

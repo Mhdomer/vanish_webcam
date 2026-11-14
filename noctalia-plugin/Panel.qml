@@ -20,13 +20,15 @@ Item {
     property real contentPreferredHeight: 590 * Style.uiScaleRatio
 
     readonly property bool camRunning: mainInstance ? mainInstance.camRunning : false
+    readonly property bool startingUp: mainInstance ? mainInstance.startingUp : false
     readonly property string camMode: mainInstance ? mainInstance.camMode : "snap"
     readonly property string camPhase: mainInstance ? mainInstance.camPhase : "off"
     readonly property bool gesturesPaused: mainInstance ? mainInstance.gesturesPaused : false
-    readonly property bool previewVisible: mainInstance ? mainInstance.previewVisible : true
+    readonly property bool previewVisible: mainInstance ? mainInstance.previewVisible : false
     readonly property bool ghostEcho: mainInstance ? mainInstance.ghostEcho : false
     readonly property string snapMessage: mainInstance ? mainInstance.snapMessage : "BRB..."
 
+    readonly property bool isCalibrating: camRunning && camPhase === "calibrating"
     readonly property bool isFrozen: camRunning && camPhase === "frozen"
     readonly property bool isVanished: camRunning && (camPhase === "vanished" || camPhase.indexOf("vanish") !== -1 || camPhase.indexOf("disappear") !== -1)
 
@@ -101,10 +103,12 @@ Item {
 
                         NText {
                             text: !root.camRunning
-                                ? "Stopped (/dev/video2 idle)"
-                                : ("Active: " + root.camMode.toUpperCase() + "  ·  Phase: " + root.camPhase.toUpperCase())
+                                ? (root.startingUp ? "Starting virtual camera..." : "Stopped (/dev/video2 idle)")
+                                : (root.isCalibrating
+                                    ? ("Active: " + root.camMode.toUpperCase() + "  ·  CALIBRATING (Step out)")
+                                    : ("Active: " + root.camMode.toUpperCase() + "  ·  Phase: " + root.camPhase.toUpperCase()))
                             pointSize: Style.fontSizeXS
-                            color: root.camRunning ? Color.mPrimary : Color.mOnSurfaceVariant
+                            color: root.camRunning ? Color.mPrimary : (root.startingUp ? Color.mSecondary : Color.mOnSurfaceVariant)
                         }
                     }
 
@@ -134,9 +138,12 @@ Item {
 
                     NButton {
                         Layout.fillWidth: true
+                        enabled: !root.startingUp || root.camRunning
                         text: !root.camRunning
-                            ? "Start & Ready Camera"
-                            : ((root.isVanished || root.isFrozen) ? "Reappear Smoothly Now (R)" : "Vanish Now (V)")
+                            ? (root.startingUp ? "Starting camera..." : "Start & Ready Camera")
+                            : (root.isCalibrating
+                                ? "Capturing Empty Room... Step Out"
+                                : ((root.isVanished || root.isFrozen) ? "Reappear Smoothly Now (R)" : "Vanish Now (V)"))
                         outlined: false
                         backgroundColor: !root.camRunning
                             ? Color.mSurface

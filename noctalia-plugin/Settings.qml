@@ -17,6 +17,7 @@ ColumnLayout {
     property string editDefaultMode: cfg.defaultMode ?? defaults.defaultMode ?? "snap"
     property bool editCompactBar: cfg.compactBar ?? defaults.compactBar ?? false
     property bool editHideWhenOff: cfg.hideWhenOff ?? defaults.hideWhenOff ?? false
+    property bool editStartHidden: cfg.startHidden ?? defaults.startHidden ?? true
     property string editCliCommand: cfg.cliCommand ?? defaults.cliCommand ?? "vanish-cam"
 
     readonly property var modeChoices: [
@@ -33,6 +34,7 @@ ColumnLayout {
         pluginApi.pluginSettings.defaultMode = root.editDefaultMode;
         pluginApi.pluginSettings.compactBar = root.editCompactBar;
         pluginApi.pluginSettings.hideWhenOff = root.editHideWhenOff;
+        pluginApi.pluginSettings.startHidden = root.editStartHidden;
         pluginApi.pluginSettings.cliCommand = root.editCliCommand;
         pluginApi.saveSettings();
     }
@@ -77,6 +79,16 @@ ColumnLayout {
         checked: root.editHideWhenOff
         onToggled: checked => {
             root.editHideWhenOff = checked;
+            root.save();
+        }
+    }
+
+    NToggle {
+        label: "Start Hidden (No Preview Window)"
+        description: "Keep the OpenCV preview window closed on start and output directly to /dev/video2 (toggle live anytime with Show Preview)."
+        checked: root.editStartHidden
+        onToggled: checked => {
+            root.editStartHidden = checked;
             root.save();
         }
     }

@@ -30,6 +30,8 @@
       "defaultMode": "snap",
       "compactBar": false,
       "hideWhenOff": false,
+      "startHidden": true,
+      "customSnapMessage": "",
       "cliCommand": "vanish-cam"
     }
   }

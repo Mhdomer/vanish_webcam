@@ -2,6 +2,8 @@
   "panel": {
     "title": "VanishCam Studio",
     "stopped": "Stopped (/dev/video2 idle)",
+    "starting": "Starting camera...",
+    "calibrating": "Capturing empty room (step out)",
     "vanishNow": "Vanish Now (V)",
     "reappearNow": "Reappear Smoothly Now (R)",
     "freezeFrame": "Freeze Frame (Z)",
@@ -22,6 +24,7 @@
     "defaultMode": "Default Launch Mode",
     "compactBar": "Compact Bar Icon Only",
     "hideWhenOff": "Hide Bar Widget When Off",
+    "startHidden": "Start Hidden (No Preview Window)",
     "cliCommand": "CLI Command / Path"
   }
 }
