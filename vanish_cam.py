@@ -135,6 +135,7 @@ class AppState:
     show_help: bool = False
     preview_visible: bool = True
     ghost_echo: bool = False
+    blur_bg: bool = False
     editing_text: bool = False
     edit_buffer: str = ""
 
@@ -615,6 +616,16 @@ def make_dissolve_fields(height: int, width: int) -> tuple[np.ndarray, np.ndarra
     return np.clip(field, 0.0, 1.0), fine_noise
 
 
+def apply_room_blur(frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Blur the room behind the person using a fast downscaled Gaussian pass."""
+    h, w = frame.shape[:2]
+    small_w, small_h = max(160, w // 4), max(90, h // 4)
+    small = cv2.resize(frame, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    blurred_small = cv2.GaussianBlur(small, (0, 0), sigmaX=5.5, sigmaY=5.5)
+    blurred = cv2.resize(blurred_small, (w, h), interpolation=cv2.INTER_LINEAR)
+    return alpha_composite(frame, blurred, mask)
+
+
 def make_ghost_sample(frame: np.ndarray, max_width: int = 640) -> np.ndarray:
     """Create a downscaled, pre-tinted cyan Ghost Echo sample to minimize RAM and per-frame casts."""
     h, w = frame.shape[:2]
@@ -1026,6 +1037,7 @@ def write_ipc_state(
         "gestures_paused": bool(state.gestures_paused) if (running and state is not None) else False,
         "preview_visible": bool(state.preview_visible) if (running and state is not None) else False,
         "ghost_echo": bool(state.ghost_echo) if (running and state is not None) else False,
+        "blur_bg": bool(state.blur_bg) if (running and state is not None) else False,
         "snap_message": snap_message if (running and mode == "snap") else "",
         "updated_at": round(time.time(), 2),
     }
@@ -1055,10 +1067,12 @@ def _hud_menu_buttons(w: int, h: int, mode: str, state: AppState) -> list[tuple[
     action_cmd = "reappear" if is_away else "vanish"
     freeze_label = "Unfreeze Camera (Z)" if state.phase == "frozen" else "Freeze Frame (Z)"
     pause_label = "Resume Gestures (G)" if state.gestures_paused else "Pause Gestures (G)"
+    blur_label = f"Blur Room: {'ON' if state.blur_bg else 'OFF'} (W)"
     echo_label = f"Ghost Echo: {'ON' if state.ghost_echo else 'OFF'} (E)"
     items = [
         (action_cmd, action_label),
         ("freeze", freeze_label),
+        ("blur", blur_label),
         ("pause", pause_label),
         ("echo", echo_label),
         ("recapture", "Recapture Room (SPACE)"),
@@ -1105,6 +1119,8 @@ def draw_preview_hud(
     mode_tag = f"SNAP: {snap_message}" if mode == "snap" and snap_message else mode.upper()
     if state.phase == "frozen":
         mode_tag = f"{mode_tag} [FROZEN]"
+    elif state.blur_bg and state.phase == "ready":
+        mode_tag = f"{mode_tag} [BLUR]"
     elif state.ghost_echo:
         mode_tag = f"{mode_tag} [ECHO]"
     pill = f"{mode_tag}  |  GESTURES {gesture_state}  |  [H] MENU"
@@ -1317,6 +1333,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         "vanish": ord("v"),
                         "reappear": ord("r"),
                         "freeze": ord("z"),
+                        "blur": ord("w"),
                         "pause": ord("g"),
                         "echo": ord("e"),
                         "recapture": ord(" "),
@@ -1787,7 +1804,16 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         state.phase = "vanished"
                         vanished_frame = display
                 elif state.phase == "ready":
-                    display = camera_frame
+                    if state.blur_bg:
+                        if mask is None or now - last_mask_at >= 0.08:
+                            if mp_image is None:
+                                mp_image = to_gesture_mp_image(camera_frame)
+                            mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                            last_mask = mask
+                            last_mask_at = now
+                        display = apply_room_blur(camera_frame, mask)
+                    else:
+                        display = camera_frame
                 else:
                     progress = 0.0
                     if state.phase == "vanishing" and state.vanish_started is not None:
@@ -1809,7 +1835,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 last_static_send = now
             frame_size[0], frame_size[1] = width, height
             active_snap_msg = snap_messages[snap_msg_idx % len(snap_messages)] if mode == "snap" else ""
-            ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, state.ghost_echo, active_snap_msg)
+            ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, state.ghost_echo, state.blur_bg, active_snap_msg)
             if ipc_sig != last_ipc_signature or (now - last_ipc_write >= 2.0):
                 write_ipc_state(True, mode, state, active_snap_msg)
                 last_ipc_signature = ipc_sig
@@ -1882,6 +1908,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     pending_keys.append(ord("z"))
                 elif ipc_cmd == "echo":
                     pending_keys.append(ord("e"))
+                elif ipc_cmd == "blur":
+                    pending_keys.append(ord("w"))
                 else:
                     cmd_map = {
                         "vanish": ord("v"),
@@ -1928,6 +1956,9 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 switch_mode(hotkey_modes[key - ord("1")])
             elif key == ord("p") and preview_hud:
                 toggle_preview_window()
+            elif key == ord("w") and preview_hud:
+                state.blur_bg = not state.blur_bg
+                print(f"[Webcam] Background blur: {'ON' if state.blur_bg else 'OFF'}.")
             elif key == ord("z") and preview_hud:
                 if state.phase == "frozen":
                     state.phase = "ready"

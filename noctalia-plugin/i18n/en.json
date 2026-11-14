@@ -10,6 +10,8 @@
     "unfreezeFrame": "Unfreeze Frame (Z)",
     "ghostEchoOn": "Ghost Echo: ON (E)",
     "ghostEchoOff": "Ghost Echo: OFF (E)",
+    "blurRoomOn": "Blur Room: ON (W)",
+    "blurRoomOff": "Blur Room: OFF (W)",
     "pauseGestures": "Pause Gestures (G)",
     "resumeGestures": "Resume Gestures (G)",
     "hidePreview": "Hide Preview (P)",

@@ -8,7 +8,8 @@ Live virtual webcam controller for [VanishCam](https://github.com/Mhdomer/vanish
 - **Studio Control Panel (`Panel.qml`):**
   - Start / Stop virtual webcam (`/dev/video2`).
   - **Vanish Now (`V`) / Reappear Smoothly (`R`)** across all 6 modes (including Goku Instant Transmission and Itachi Crows).
-  - **Freeze Frame (`Z`)** (0% MediaPipe CPU while frozen) and **Ghost Echo (`E`)** spectral replay.
+  - **Freeze Frame (`Z`)** (0% MediaPipe CPU while frozen), **Blur Room (`W`)** (lightweight downscaled portrait blur), and **Ghost Echo (`E`)** spectral replay.
+  - **Headless Default & Eco Mode (`540p @ 24 FPS`):** Starts cleanly without an extra preview window (`startHidden: true` in settings), with optional Eco resolution/FPS scaling to minimize CPU heat.
   - **Pause / Resume Hand Gestures (`G`)** and **Show / Hide Local Preview (`P`)**.
   - **6-Mode Live Hot-Swap Grid:** Switch between `Snap Void`, `Naruto`, `Normal`, `Particles`, `Itachi`, and `Goku` without restarting `/dev/video0` or `/dev/video2`.
   - **Editable Snap Void Particle Excuse:** Type any custom message (`COFFEE BREAK`, `5 MIN`, etc.) or pick from one-click presets (`BRB...`, `GONE`, `AFK`, `MY INTERNET DIED`, `IN A MEETING`).

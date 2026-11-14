@@ -17,7 +17,7 @@ Item {
 
     property bool panelReady: true
     property real contentPreferredWidth: 420 * Style.uiScaleRatio
-    property real contentPreferredHeight: 590 * Style.uiScaleRatio
+    property real contentPreferredHeight: 625 * Style.uiScaleRatio
 
     readonly property bool camRunning: mainInstance ? mainInstance.camRunning : false
     readonly property bool startingUp: mainInstance ? mainInstance.startingUp : false
@@ -26,6 +26,7 @@ Item {
     readonly property bool gesturesPaused: mainInstance ? mainInstance.gesturesPaused : false
     readonly property bool previewVisible: mainInstance ? mainInstance.previewVisible : false
     readonly property bool ghostEcho: mainInstance ? mainInstance.ghostEcho : false
+    readonly property bool blurBg: mainInstance ? mainInstance.blurBg : false
     readonly property string snapMessage: mainInstance ? mainInstance.snapMessage : "BRB..."
 
     readonly property bool isCalibrating: camRunning && camPhase === "calibrating"
@@ -177,6 +178,18 @@ Item {
                         NButton {
                             Layout.fillWidth: true
                             enabled: root.camRunning
+                            text: root.blurBg ? "Blur Room: ON (W)" : "Blur Room: OFF (W)"
+                            outlined: false
+                            backgroundColor: root.blurBg ? Qt.alpha(Color.mPrimary, 0.25) : Color.mSurface
+                            textColor: root.blurBg ? Color.mPrimary : Color.mOnSurface
+                            onClicked: {
+                                if (mainInstance) mainInstance.toggleBlur();
+                            }
+                        }
+
+                        NButton {
+                            Layout.fillWidth: true
+                            enabled: root.camRunning
                             text: root.ghostEcho ? "Ghost Echo: ON (E)" : "Ghost Echo: OFF (E)"
                             outlined: false
                             backgroundColor: root.ghostEcho ? Qt.alpha(Color.mPrimary, 0.25) : Color.mSurface
@@ -200,11 +213,12 @@ Item {
 
                         NButton {
                             Layout.fillWidth: true
+                            Layout.columnSpan: 2
                             enabled: root.camRunning
                             text: root.previewVisible ? "Hide Preview (P)" : "Show Preview (P)"
                             outlined: false
-                            backgroundColor: Color.mSurface
-                            textColor: Color.mOnSurface
+                            backgroundColor: root.previewVisible ? Qt.alpha(Color.mSecondary, 0.22) : Color.mSurface
+                            textColor: root.previewVisible ? Color.mSecondary : Color.mOnSurface
                             onClicked: {
                                 if (mainInstance) mainInstance.togglePreview();
                             }

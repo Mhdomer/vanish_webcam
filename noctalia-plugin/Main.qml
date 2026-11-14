@@ -24,6 +24,7 @@ Item {
     property bool gesturesPaused: false
     property bool previewVisible: !startHidden
     property bool ghostEcho: false
+    property bool blurBg: false
     property string snapMessage: savedSnapMessage ? savedSnapMessage : "BRB..."
 
     FileView {
@@ -51,6 +52,7 @@ Item {
                     root.gesturesPaused = Boolean(data.gestures_paused);
                     root.previewVisible = data.preview_visible !== undefined ? Boolean(data.preview_visible) : !root.startHidden;
                     root.ghostEcho = Boolean(data.ghost_echo);
+                    root.blurBg = Boolean(data.blur_bg);
                     if (data.snap_message) {
                         root.snapMessage = data.snap_message;
                     }
@@ -58,6 +60,7 @@ Item {
                     root.camPhase = "off";
                     root.gesturesPaused = false;
                     root.ghostEcho = false;
+                    root.blurBg = false;
                     if (root.savedSnapMessage) {
                         root.snapMessage = root.savedSnapMessage;
                     }
@@ -147,6 +150,10 @@ Item {
         if (root.camRunning) runCli(["echo"]);
     }
 
+    function toggleBlur() {
+        if (root.camRunning) runCli(["blur"]);
+    }
+
     function togglePause() {
         if (root.camRunning) runCli(["pause"]);
     }
@@ -193,6 +200,7 @@ Item {
         function toggle() { root.togglePower(); }
         function action() { root.triggerAction(); }
         function freeze() { root.toggleFreeze(); }
+        function blur() { root.toggleBlur(); }
         function echo() { root.toggleEcho(); }
         function pause() { root.togglePause(); }
         function preview() { root.togglePreview(); }
