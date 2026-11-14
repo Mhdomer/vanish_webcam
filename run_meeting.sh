@@ -6,6 +6,11 @@ set -euo pipefail
 REPO="$(dirname "$(readlink -f "$0")")"
 PYTHON="$REPO/.venv/bin/python"
 
+notify_err() {
+    echo "$1" >&2
+    command -v notify-send >/dev/null 2>&1 && notify-send -u critical -a "VanishCam" "VanishCam Error" "$1" || true
+}
+
 find_device() {
     for dev in /sys/class/video4linux/video*; do
         [[ -r "$dev/name" ]] && [[ "$(<"$dev/name")" == "VanishCam" ]] && echo "/dev/$(basename "$dev")" && return
@@ -34,8 +39,8 @@ fi
 
 DEVICE="$(find_device)"
 if [[ -z "$DEVICE" ]]; then
-    echo "[run_meeting] v4l2loopback is loaded but no 'VanishCam' device found." >&2
-    echo "Reload it with: sudo modprobe -r v4l2loopback && sudo modprobe v4l2loopback exclusive_caps=1 card_label=VanishCam" >&2
+    notify_err "[run_meeting] v4l2loopback loaded, but no 'VanishCam' device found."
+    echo "Reload it with: sudo modprobe -r v4l2loopback && sudo modprobe v4l2loopback video_nr=10 exclusive_caps=1 card_label=VanishCam" >&2
     exit 1
 fi
 
@@ -50,7 +55,7 @@ done
 if [[ -z "$CAMERA_IDX" ]]; then
     CAMERA_IDX="$(find_physical_camera)"
     if [[ -z "$CAMERA_IDX" ]]; then
-        echo "[run_meeting] No physical webcam capture device found." >&2
+        notify_err "[run_meeting] No physical webcam capture device found."
         exit 1
     fi
     ARGS+=(--camera "$CAMERA_IDX")
@@ -58,7 +63,8 @@ fi
 
 CAMERA_DEV="/dev/video$CAMERA_IDX"
 if holders="$(fuser "$CAMERA_DEV" 2>/dev/null | xargs)" && [[ -n "$holders" ]]; then
-    echo "[run_meeting] $CAMERA_DEV is busy. Stop the webcam in the browser tab or app below, then retry:" >&2
+    busy_procs="$(ps -o comm= -p "${holders// /,}" 2>/dev/null | paste -sd, - || true)"
+    notify_err "$CAMERA_DEV is busy (${busy_procs:-another app}). Close the browser/app camera tab and retry."
     ps -o pid=,comm= -p "${holders// /,}" >&2 || true
     exit 1
 fi

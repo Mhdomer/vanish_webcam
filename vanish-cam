@@ -37,6 +37,14 @@ case "$cmd" in
             exit 0
         fi
         nohup "$LAUNCHER" --reuse-bg "$@" >"$LOG_FILE" 2>&1 &
+        bg_pid=$!
+        sleep 0.5
+        if ! kill -0 "$bg_pid" 2>/dev/null && ! is_running; then
+            err_msg="$(tail -n 2 "$LOG_FILE" 2>/dev/null | paste -sd' ' -)"
+            notify "Start failed: ${err_msg:-check /tmp/vanish_cam.log}"
+            echo "${err_msg:-VanishCam failed to start}" >&2
+            exit 1
+        fi
         notify "Started VanishCam (${*:-naruto})"
         ;;
     stop|quit)

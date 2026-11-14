@@ -10,6 +10,24 @@ from pathlib import Path
 
 SOUND_PATH = Path(__file__).resolve().parent / "assets" / "vanish.MP3"
 TELEPORT_SOUND_PATH = Path(__file__).resolve().parent / "assets" / "teleport.MP3"
+MIC_BUS_NODE = "vanishcam_mic_bus"
+
+
+def _find_pipewire_mic_bus(bus_name: str = MIC_BUS_NODE) -> str | None:
+    pw_play = shutil.which("pw-play")
+    pactl = shutil.which("pactl")
+    if not pw_play or not pactl:
+        return None
+    try:
+        res = subprocess.run(
+            [pactl, "list", "short", "sinks"],
+            capture_output=True, text=True, timeout=1.5, check=False,
+        )
+        if res.returncode == 0 and bus_name in res.stdout:
+            return pw_play
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
 
 
 class VanishSound:
@@ -20,6 +38,8 @@ class VanishSound:
 
         os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
         self.process = None
+        self.mic_process = None
+        self.pw_play = _find_pipewire_mic_bus()
         self.ffplay = None
         try:
             from pygame import mixer
@@ -40,7 +60,24 @@ class VanishSound:
                 mixer.quit()
             raise RuntimeError(f"Impossibile aprire l'audio di sparizione: {error}") from error
 
+    def _play_to_mic_bus(self) -> None:
+        if not self.pw_play:
+            return
+        if self.mic_process is not None and self.mic_process.poll() is None:
+            self.mic_process.terminate()
+        try:
+            self.mic_process = subprocess.Popen(
+                [self.pw_play, "--target", MIC_BUS_NODE, str(self.path)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            self.mic_process = None
+
     def play(self) -> None:
+        self._play_to_mic_bus()
         if self.ffplay is not None:
             if self.process is not None and self.process.poll() is None:
                 self.process.terminate()
@@ -60,6 +97,8 @@ class VanishSound:
             raise RuntimeError("Impossibile avviare l'audio di sparizione: nessun canale libero.")
 
     def stop(self) -> None:
+        if self.mic_process is not None and self.mic_process.poll() is None:
+            self.mic_process.terminate()
         if self.ffplay is not None:
             if self.process is not None and self.process.poll() is None:
                 self.process.terminate()
