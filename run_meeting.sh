@@ -12,6 +12,21 @@ find_device() {
     done
 }
 
+find_physical_camera() {
+    local dev idx path
+    for dev in $(ls -1dv /sys/class/video4linux/video* 2>/dev/null); do
+        [[ -r "$dev/name" ]] || continue
+        [[ "$(<"$dev/name")" == "VanishCam" ]] && continue
+        path="/dev/$(basename "$dev")"
+        idx="${path#/dev/video}"
+        if command -v v4l2-ctl >/dev/null 2>&1; then
+            v4l2-ctl -d "$path" --info 2>/dev/null | awk '/Device Caps/{f=1} f && /Video Capture/{ok=1} END{exit !ok}' || continue
+        fi
+        echo "$idx"
+        return
+    done
+}
+
 if [[ ! -d /sys/module/v4l2loopback ]]; then
     echo "[run_meeting] Loading v4l2loopback (sudo needed)..."
     sudo modprobe v4l2loopback exclusive_caps=1 card_label="VanishCam"
@@ -24,20 +39,36 @@ if [[ -z "$DEVICE" ]]; then
     exit 1
 fi
 
-if holders="$(fuser /dev/video0 2>/dev/null | xargs)" && [[ -n "$holders" ]]; then
-    echo "[run_meeting] /dev/video0 is busy. Stop the webcam in the browser tab or app below, then retry:" >&2
+ARGS=("$@")
+CAMERA_IDX=""
+for ((i=0; i<${#ARGS[@]}; i++)); do
+    if [[ "${ARGS[i]}" == "--camera" ]] && (( i + 1 < ${#ARGS[@]} )); then
+        CAMERA_IDX="${ARGS[i+1]}"
+        break
+    fi
+done
+if [[ -z "$CAMERA_IDX" ]]; then
+    CAMERA_IDX="$(find_physical_camera)"
+    if [[ -z "$CAMERA_IDX" ]]; then
+        echo "[run_meeting] No physical webcam capture device found." >&2
+        exit 1
+    fi
+    ARGS+=(--camera "$CAMERA_IDX")
+fi
+
+CAMERA_DEV="/dev/video$CAMERA_IDX"
+if holders="$(fuser "$CAMERA_DEV" 2>/dev/null | xargs)" && [[ -n "$holders" ]]; then
+    echo "[run_meeting] $CAMERA_DEV is busy. Stop the webcam in the browser tab or app below, then retry:" >&2
     ps -o pid=,comm= -p "${holders// /,}" >&2 || true
     exit 1
 fi
 
-ARGS=("$@")
 [[ " ${ARGS[*]} " == *" --mode "* ]] || ARGS+=(--mode naruto)
-[[ " ${ARGS[*]} " == *" --camera "* ]] || ARGS+=(--camera 0)
 [[ " ${ARGS[*]} " == *" --bg-delay "* ]] || ARGS+=(--bg-delay 7)
 [[ " ${ARGS[*]} " == *" --async-gestures "* ]] || ARGS+=(--async-gestures)
 [[ " ${ARGS[*]} " == *" --preview-hud "* ]] || ARGS+=(--preview-hud)
 
-echo "[run_meeting] Virtual camera: $DEVICE (pick 'VanishCam' in your meeting app)"
+echo "[run_meeting] Physical camera: $CAMERA_DEV -> Virtual camera: $DEVICE (pick 'VanishCam' in your meeting app)"
 # The pip OpenCV build only ships the Qt xcb plugin, so route this app through XWayland.
 QT_QPA_PLATFORM=xcb exec "$PYTHON" "$REPO/vanish_cam.py" \
     --virtual-camera --virtual-backend v4l2loopback --virtual-device "$DEVICE" "${ARGS[@]}"

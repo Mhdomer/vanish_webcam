@@ -147,6 +147,13 @@ def positive_fps(value: str) -> float:
     return fps
 
 
+def positive_seconds(value: str) -> float:
+    seconds = float(value)
+    if not np.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("Hold delay must be greater than zero.")
+    return seconds
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Choose a disappearance effect for your webcam."
@@ -192,6 +199,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reuse-bg", action="store_true",
         help="Reuse the last saved empty-room background on startup (0s calibration)",
+    )
+    parser.add_argument(
+        "--goku-delay", type=positive_seconds, default=None,
+        help=f"Hold seconds for Goku forehead trigger (skips prompt; default: {HOLD_SECONDS:g} when headless)",
     )
     parser.add_argument(
         "--snap-text", type=str, default=None,
@@ -1015,6 +1026,8 @@ def load_saved_background(width: int, height: int) -> np.ndarray | None:
 
 
 def save_background(background: np.ndarray) -> None:
+    if background is None or background.shape[1] < 320 or background.shape[0] < 180:
+        return
     try:
         SAVED_BG_PATH.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(SAVED_BG_PATH), background)
@@ -1229,9 +1242,14 @@ def run(license_session=None) -> int:
         if args.camera is None:
             return 0
     if mode == "goku":
-        args.goku_delay = choose_goku_delay(check_license=check) if check else choose_goku_delay()
-        if args.goku_delay is None:
-            return 0
+        if getattr(args, "goku_delay", None) is not None:
+            pass
+        elif getattr(args, "no_preview", False) or getattr(args, "reuse_bg", False):
+            args.goku_delay = HOLD_SECONDS
+        else:
+            args.goku_delay = choose_goku_delay(check_license=check) if check else choose_goku_delay()
+            if args.goku_delay is None:
+                return 0
     with ExitStack() as resources:
         if check:
             check()
@@ -1242,6 +1260,10 @@ def run(license_session=None) -> int:
 def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, license_session=None) -> int:
     if hasattr(cv2, "setNumThreads"):
         cv2.setNumThreads(2)
+    try:
+        CMD_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
     download_models(mode)
     capture = open_camera(args.camera, args.width, args.height)
     resources.callback(capture.release)

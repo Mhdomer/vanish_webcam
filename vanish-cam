@@ -44,8 +44,10 @@ case "$cmd" in
             printf 'quit\n' >> "$CMD_FILE"
             sleep 0.4
             pkill -f "$REPO/vanish_cam.py" 2>/dev/null || true
+            rm -f "$CMD_FILE" "$STATE_FILE"
             notify "Stopped VanishCam"
         else
+            rm -f "$CMD_FILE"
             echo "VanishCam is not running."
         fi
         ;;
