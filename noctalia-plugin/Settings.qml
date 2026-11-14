@@ -18,6 +18,7 @@ ColumnLayout {
     property bool editCompactBar: cfg.compactBar ?? defaults.compactBar ?? false
     property bool editHideWhenOff: cfg.hideWhenOff ?? defaults.hideWhenOff ?? false
     property bool editStartHidden: cfg.startHidden ?? defaults.startHidden ?? true
+    property bool editEcoMode: cfg.ecoMode ?? defaults.ecoMode ?? false
     property string editCliCommand: cfg.cliCommand ?? defaults.cliCommand ?? "vanish-cam"
 
     readonly property var modeChoices: [
@@ -35,6 +36,7 @@ ColumnLayout {
         pluginApi.pluginSettings.compactBar = root.editCompactBar;
         pluginApi.pluginSettings.hideWhenOff = root.editHideWhenOff;
         pluginApi.pluginSettings.startHidden = root.editStartHidden;
+        pluginApi.pluginSettings.ecoMode = root.editEcoMode;
         pluginApi.pluginSettings.cliCommand = root.editCliCommand;
         pluginApi.saveSettings();
     }
@@ -89,6 +91,16 @@ ColumnLayout {
         checked: root.editStartHidden
         onToggled: checked => {
             root.editStartHidden = checked;
+            root.save();
+        }
+    }
+
+    NToggle {
+        label: "Eco Mode (540p @ 24 FPS)"
+        description: "Lower capture and virtual camera output to 960x540 @ 24 FPS to reduce CPU usage, heat, and battery drain during long calls."
+        checked: root.editEcoMode
+        onToggled: checked => {
+            root.editEcoMode = checked;
             root.save();
         }
     }

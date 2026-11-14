@@ -13,6 +13,7 @@ Item {
     readonly property bool compactBar: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.compactBar !== undefined) ? pluginApi.pluginSettings.compactBar : false
     readonly property bool hideWhenOff: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.hideWhenOff !== undefined) ? pluginApi.pluginSettings.hideWhenOff : false
     readonly property bool startHidden: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.startHidden !== undefined) ? pluginApi.pluginSettings.startHidden : true
+    readonly property bool ecoMode: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.ecoMode !== undefined) ? pluginApi.pluginSettings.ecoMode : false
     readonly property string savedSnapMessage: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.customSnapMessage) ? pluginApi.pluginSettings.customSnapMessage : ""
     readonly property string cliCommand: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.cliCommand) ? pluginApi.pluginSettings.cliCommand : "vanish-cam"
 
@@ -70,7 +71,7 @@ Item {
 
     Timer {
         id: pollTimer
-        interval: 650
+        interval: root.camRunning ? 650 : 2500
         repeat: true
         running: true
         onTriggered: stateFileView.reload()
@@ -101,6 +102,7 @@ Item {
     function buildBgArgs(targetMode) {
         const args = ["bg", "--mode", targetMode];
         if (root.startHidden) args.push("--no-preview");
+        if (root.ecoMode) args.push("--width", "960", "--height", "540", "--fps", "24");
         const msg = (root.savedSnapMessage || "").trim();
         if (msg) args.push("--snap-text", msg);
         return args;

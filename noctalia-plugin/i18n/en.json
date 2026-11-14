@@ -25,6 +25,7 @@
     "compactBar": "Compact Bar Icon Only",
     "hideWhenOff": "Hide Bar Widget When Off",
     "startHidden": "Start Hidden (No Preview Window)",
+    "ecoMode": "Eco Mode (540p @ 24 FPS)",
     "cliCommand": "CLI Command / Path"
   }
 }

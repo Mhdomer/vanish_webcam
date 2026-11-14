@@ -33,7 +33,7 @@ class VanishSound:
         self.owns_mixer = mixer.get_init() is None
         try:
             if self.owns_mixer:
-                mixer.init(frequency=44100, size=-16, channels=2, buffer=256)
+                mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
             self.sound = mixer.Sound(str(path))  # Decode once, before opening the webcam.
         except Exception as error:
             if self.owns_mixer:

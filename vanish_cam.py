@@ -615,6 +615,23 @@ def make_dissolve_fields(height: int, width: int) -> tuple[np.ndarray, np.ndarra
     return np.clip(field, 0.0, 1.0), fine_noise
 
 
+def make_ghost_sample(frame: np.ndarray, max_width: int = 640) -> np.ndarray:
+    """Create a downscaled, pre-tinted cyan Ghost Echo sample to minimize RAM and per-frame casts."""
+    h, w = frame.shape[:2]
+    if w > max_width:
+        scale = max_width / float(w)
+        sample = cv2.resize(
+            frame,
+            (max_width, max(1, int(round(h * scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        sample = frame.copy()
+    sample[:, :, 2] = (sample[:, :, 2].astype(np.uint16) * 35 // 100).astype(np.uint8)
+    sample[:, :, 0] = np.minimum(sample[:, :, 0].astype(np.uint16) + 55, 255).astype(np.uint8)
+    return np.ascontiguousarray(sample)
+
+
 def to_gesture_mp_image(frame: np.ndarray, max_width: int = 640) -> mp.Image:
     """Convert a BGR frame to an RGB MediaPipe Image, downscaling large frames to cut gesture CPU."""
     h, w = frame.shape[:2]
@@ -914,7 +931,7 @@ class MultiViewHandLandmarker:
                 self.next_retry_ms = timestamp_ms + 90
                 return True
         self.preferred_view = None
-        self.next_retry_ms = timestamp_ms + 80
+        self.next_retry_ms = timestamp_ms + (220 if self.last_hand_count == 0 else 80)
         return False
 
     def close(self) -> None:
@@ -975,8 +992,14 @@ def load_saved_background(width: int, height: int) -> np.ndarray | None:
     if not SAVED_BG_PATH.is_file():
         return None
     img = cv2.imread(str(SAVED_BG_PATH))
-    if img is None or img.shape[:2] != (height, width):
+    if img is None:
         return None
+    if img.shape[:2] != (height, width):
+        src_ratio = img.shape[1] / float(max(1, img.shape[0]))
+        dst_ratio = width / float(max(1, height))
+        if abs(src_ratio - dst_ratio) > 0.05:
+            return None
+        img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
     return img
 
 
@@ -1201,6 +1224,8 @@ def run(license_session=None) -> int:
 
 
 def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, license_session=None) -> int:
+    if hasattr(cv2, "setNumThreads"):
+        cv2.setNumThreads(2)
     download_models(mode)
     capture = open_camera(args.camera, args.width, args.height)
     resources.callback(capture.release)
@@ -1409,16 +1434,53 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             print(f"[Snap] Pinch thumb + middle finger then snap to vanish (message: {snap_messages[0]}).")
             print("[Snap] Show a peace sign (or press R) to rebuild. Press T to cycle excuse message.")
 
+    is_real_capture = isinstance(capture, cv2.VideoCapture)
+    skipped_decode = False
+    last_static_send = 0.0
+
+    def ensure_live_frame(cur_frame: np.ndarray) -> np.ndarray:
+        nonlocal skipped_decode
+        if not skipped_decode:
+            return cur_frame
+        ok, live = capture.retrieve()
+        skipped_decode = False
+        if not ok:
+            return cur_frame
+        return live if args.no_mirror else cv2.flip(live, 1)
+
     try:
         while True:
             if license_session is not None:
                 license_session.ensure_valid()
-            ok, camera_frame = capture.read()
-            if not ok:
-                raise RuntimeError("La webcam ha smesso di restituire immagini.")
+            static_idle = (
+                is_real_capture
+                and background is not None
+                and (
+                    (state.phase == "frozen" and frozen_frame is not None)
+                    or (
+                        state.phase == "vanished"
+                        and vanished_frame is not None
+                        and not state.ghost_echo
+                        and (state.gestures_paused or mode in ("normal", "naruto", "particles"))
+                    )
+                )
+            )
+            if static_idle:
+                if not capture.grab():
+                    raise RuntimeError("La webcam ha smesso di restituire immagini.")
+                skipped_decode = True
+                camera_frame = frozen_frame if state.phase == "frozen" else vanished_frame
+            else:
+                if skipped_decode:
+                    capture.grab()
+                    skipped_decode = False
+                ok, camera_frame = capture.read()
+                if not ok:
+                    raise RuntimeError("La webcam ha smesso di restituire immagini.")
 
             skip_flip = (
-                (state.phase == "frozen" and frozen_frame is not None)
+                static_idle
+                or (state.phase == "frozen" and frozen_frame is not None)
                 or (
                     state.phase == "vanished"
                     and vanished_frame is not None
@@ -1452,7 +1514,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
 
             if state.ghost_echo and state.phase == "ready" and now - last_echo_sample >= 0.10:
                 last_echo_sample = now
-                echo_buffer.append(camera_frame.copy())
+                echo_buffer.append(make_ghost_sample(camera_frame))
                 if len(echo_buffer) > 25:
                     echo_buffer.pop(0)
 
@@ -1602,8 +1664,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
 
             elif mode == "snap" and state.phase == "snap_rebuilding":
                 age = max(0.0, time.perf_counter() - state.vanish_started)
-                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mp_image = to_gesture_mp_image(camera_frame)
                 mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                 display = snap_rebuild.render(camera_frame, background, mask, age)
                 if age >= REBUILD_SECONDS:
@@ -1623,9 +1684,9 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                                     cache=log_cache)
                 if state.ghost_echo and echo_buffer and int(now * 0.45) % 2 == 0:
                     echo_idx = int((now * 10.0) % len(echo_buffer))
-                    ghost = echo_buffer[echo_idx].copy()
-                    ghost[:, :, 2] = (ghost[:, :, 2] * 0.35).astype(np.uint8)
-                    ghost[:, :, 0] = np.clip(ghost[:, :, 0].astype(np.int16) + 55, 0, 255).astype(np.uint8)
+                    ghost = echo_buffer[echo_idx]
+                    if ghost.shape[:2] != (height, width):
+                        ghost = cv2.resize(ghost, (width, height), interpolation=cv2.INTER_LINEAR)
                     alpha = 0.24 + 0.08 * float(np.sin(now * 9.0))
                     display = cv2.addWeighted(ghost, alpha, vanished_frame, 1.0 - alpha, 0)
                 else:
@@ -1743,8 +1804,9 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
 
             if license_session is not None:
                 license_session.ensure_valid()
-            if virtual_camera is not None:
+            if virtual_camera is not None and (not static_idle or now - last_static_send >= 0.070):
                 send_virtual_frame(virtual_camera, display)
+                last_static_send = now
             frame_size[0], frame_size[1] = width, height
             active_snap_msg = snap_messages[snap_msg_idx % len(snap_messages)] if mode == "snap" else ""
             ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, state.ghost_echo, active_snap_msg)
@@ -1930,15 +1992,16 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 else:
                     print("[Webcam] No matching saved background found (capture one with SPACE first).")
             elif key == ord("r"):
-                if skip_flip and not args.no_mirror:
+                if skipped_decode:
+                    camera_frame = ensure_live_frame(camera_frame)
+                elif skip_flip and not args.no_mirror:
                     camera_frame = cv2.flip(camera_frame, 1)
                 if state.phase == "frozen":
                     state.phase = "ready"
                     frozen_frame = None
                     print("[Webcam] Unfroze camera.")
                 elif background is not None and mode == "snap" and state.phase == "vanished":
-                    rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                    mp_image = to_gesture_mp_image(camera_frame)
                     mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                     snap_rebuild = SnapRebuildEffect(mask, width, height)
                     if chime_sound is not None:
@@ -1947,8 +2010,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     state.vanish_started = time.perf_counter()
                     vanished_frame = None
                 elif background is not None and mode == "itachi" and state.phase == "vanished":
-                    rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                    mp_image = to_gesture_mp_image(camera_frame)
                     mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                     try:
                         itachi_effect = ItachiCrowEffect(camera_frame, mask)
@@ -1961,8 +2023,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         state.vanish_started = time.perf_counter()
                         vanished_frame = None
                 elif background is not None and mode == "goku" and state.phase == "vanished" and preview_hud:
-                    rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                    mp_image = to_gesture_mp_image(camera_frame)
                     mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                     if cv2.findNonZero((mask > 0.04).astype(np.uint8)) is None:
                         cv2.ellipse(mask, (width // 2, int(height * 0.58)), (width // 5, int(height * 0.35)), 0, 0, 360, 1.0, -1)
@@ -1989,8 +2050,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         last_mask_at = float("-inf")
                         particle_effect = None
             elif key == ord("v") and background is not None and mode == "snap" and state.phase == "ready":
-                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mp_image = to_gesture_mp_image(camera_frame)
                 mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                 msg = snap_messages[snap_msg_idx % len(snap_messages)]
                 snap_effect = SnapVoidEffect(
@@ -2003,8 +2063,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 state.vanish_started = time.perf_counter()
                 vanished_frame = None
             elif key == ord("v") and background is not None and mode == "itachi" and state.phase == "ready":
-                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mp_image = to_gesture_mp_image(camera_frame)
                 mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                 try:
                     itachi_effect = ItachiCrowEffect(camera_frame, mask)
@@ -2014,8 +2073,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     state.phase = "itachi_disappearing"
                     state.vanish_started = time.perf_counter()
             elif key == ord("v") and background is not None and mode == "goku" and state.phase == "ready" and preview_hud:
-                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mp_image = to_gesture_mp_image(camera_frame)
                 mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                 if cv2.findNonZero((mask > 0.04).astype(np.uint8)) is None:
                     cv2.ellipse(mask, (width // 2, int(height * 0.58)), (width // 5, int(height * 0.35)), 0, 0, 360, 1.0, -1)
@@ -2051,7 +2109,9 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             elif key == ord("f"):
                 state.fullscreen = not state.fullscreen
                 set_fullscreen(state.fullscreen)
-            if virtual_camera is not None:
+            if static_idle:
+                time.sleep(0.045)
+            elif virtual_camera is not None:
                 virtual_camera.sleep_until_next_frame()
     finally:
         write_ipc_state(False)
