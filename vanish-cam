@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# CLI & IPC controller for VanishCam (terminal, Niri keybinds, and future Noctalia plugin).
+set -euo pipefail
+
+REPO="/mnt/data/Projects/vanish_webcam"
+LAUNCHER="$REPO/run_meeting.sh"
+STATE_FILE="/tmp/vanish_cam.state.json"
+CMD_FILE="/tmp/vanish_cam.cmd"
+LOG_FILE="/tmp/vanish_cam.log"
+
+is_running() {
+    pgrep -f "$REPO/vanish_cam.py" >/dev/null 2>&1
+}
+
+notify() {
+    command -v notify-send >/dev/null 2>&1 && notify-send -a "VanishCam" -t 2200 "VanishCam" "$1" || true
+}
+
+send_cmd() {
+    if ! is_running; then
+        echo "VanishCam is not running." >&2
+        exit 1
+    fi
+    printf '%s\n' "$1" >> "$CMD_FILE"
+}
+
+cmd="${1:-status}"
+shift || true
+
+case "$cmd" in
+    start)
+        exec "$LAUNCHER" "$@"
+        ;;
+    bg|daemon)
+        if is_running; then
+            echo "VanishCam is already running."
+            exit 0
+        fi
+        nohup "$LAUNCHER" --reuse-bg "$@" >"$LOG_FILE" 2>&1 &
+        notify "Started VanishCam (${*:-naruto})"
+        ;;
+    stop|quit)
+        if is_running; then
+            printf 'quit\n' >> "$CMD_FILE"
+            sleep 0.4
+            pkill -f "$REPO/vanish_cam.py" 2>/dev/null || true
+            notify "Stopped VanishCam"
+        else
+            echo "VanishCam is not running."
+        fi
+        ;;
+    toggle)
+        if is_running; then
+            "$0" stop
+        else
+            "$0" bg "$@"
+        fi
+        ;;
+    vanish|reappear|pause|recapture|load-bg|next-text|fullscreen)
+        send_cmd "$cmd"
+        ;;
+    action|toggle-action)
+        send_cmd "toggle-action"
+        ;;
+    menu|help-overlay)
+        send_cmd "help"
+        ;;
+    snap-text)
+        [[ $# -ge 1 ]] || { echo "Usage: vanish-cam snap-text \"MESSAGE\"" >&2; exit 1; }
+        send_cmd "snap-text:$*"
+        ;;
+    status)
+        if ! is_running; then
+            if [[ "${1:-}" == "--json" ]]; then
+                echo '{"running":false,"phase":"off","mode":"","gestures_paused":false,"snap_message":""}'
+            else
+                echo "VanishCam: off"
+            fi
+            exit 0
+        fi
+        if [[ -r "$STATE_FILE" ]]; then
+            if [[ "${1:-}" == "--json" ]]; then
+                cat "$STATE_FILE"
+                echo
+            else
+                "$REPO/.venv/bin/python" -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+mode = d.get("mode", "?")
+phase = d.get("phase", "?")
+paused = "paused" if d.get("gestures_paused") else "active"
+extra = f" | text=\"{d.get(\"snap_message\")}\"" if d.get("snap_message") else ""
+print(f"VanishCam: running (pid={d.get(\"pid\")}) | mode={mode} | phase={phase} | gestures={paused}{extra}")
+' "$STATE_FILE"
+            fi
+        else
+            echo "VanishCam: running"
+        fi
+        ;;
+    *)
+        cat <<EOF
+Usage: vanish-cam <command> [args]
+
+Commands:
+  start [args]          Start VanishCam in foreground (e.g. vanish-cam start --mode snap)
+  bg [args]             Start VanishCam in background with --reuse-bg
+  stop                  Stop running VanishCam instance
+  toggle [args]         Toggle VanishCam on/off
+  action                Vanish if ready, or reappear if vanished
+  vanish                Trigger vanish effect now
+  reappear              Reappear smoothly now
+  pause                 Pause / resume gesture recognition
+  recapture             Start empty-room background countdown
+  load-bg               Reload last saved room background
+  next-text             Cycle Snap mode excuse message
+  snap-text "TEXT"      Set custom Snap mode excuse message live
+  menu                  Toggle local H control menu in preview window
+  status [--json]       Show live status (human or JSON for Noctalia/Niri plugins)
+EOF
+        ;;
+esac

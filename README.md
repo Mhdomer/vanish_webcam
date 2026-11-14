@@ -69,20 +69,48 @@ Useful launch options:
 
 ### UX & Meeting Controls
 - **English UI & Logs:** Translated `goku_settings.py`, `vanish_cam.py` menus, CLI `--help`, and terminal output to English.
-- **Preview-Only Countdown & Status HUD:** Shows a clear countdown banner (`STEP OUT OF FRAME: 7s` -> `CAPTURING EMPTY ROOM...` -> `BACKGROUND READY!`), a subtle bottom status pill, and an on-demand hotkey cheat sheet (`H`) strictly in the local preview window (never sent to the virtual camera).
+- **Preview-Only Countdown & Clickable `H` Control Menu (`--preview-hud`):** Shows a clear countdown banner (`STEP OUT OF FRAME: 7s` -> `CAPTURING EMPTY ROOM...` -> `BACKGROUND READY!`), a subtle bottom status pill (`[H] MENU`), and a mouse-clickable local control menu (`H` or click the bottom-left pill) strictly in the local preview window (never sent to `/dev/video2`).
+- **Smooth Animated Reappear:** Reappearing (`R`, `vanish-cam reappear`, or `vanish-cam action`) plays a smooth 0.85s cubic-ease crossfade + sound in `naruto`, `normal`, and `particles` modes, and triggers the particle/crow/teleport return animations in `snap`, `itachi`, and `goku` modes.
 - **Saved Background (`--reuse-bg` / `B`):** Automatically saves your clean room background locally to `assets/last_bg.png` (git-ignored) so you can start future meetings in 0 seconds.
 - **Gesture Pause (`G`):** Toggles gesture detection on/off so talking with your hands never triggers an accidental vanish mid-sentence.
+- **Remote CLI (`vanish-cam`) & Plugin-Ready JSON IPC:** Control a running session without focusing the preview window using `./vanish-cam` (`~/.local/bin/vanish-cam`), backed by `/tmp/vanish_cam.state.json` and `/tmp/vanish_cam.cmd` for Wayland compositors (Niri) and status bar plugins (Noctalia / Waybar).
 
 ---
 
-## Controls (Preview Window Focused)
+## Remote Control CLI (`vanish-cam`) & JSON IPC
 
-- `H`: Toggle hotkey cheat sheet overlay
+You can start, stop, or control VanishCam from any terminal, launcher, or Wayland hotkey while your browser or meeting window stays focused:
+
+```bash
+vanish-cam start --mode snap        # Start in background (uses saved room frame if present)
+vanish-cam stop                     # Stop running instance cleanly
+vanish-cam toggle --mode snap       # Start if off, stop if running
+vanish-cam action                   # Smart toggle: vanish if visible, reappear if vanished
+vanish-cam vanish                   # Trigger vanish effect immediately
+vanish-cam reappear                 # Smoothly reappear / rebuild immediately
+vanish-cam pause                    # Toggle gesture detection (ON <-> PAUSED)
+vanish-cam recapture                # Start room background recapture countdown
+vanish-cam load-bg                  # Load saved room background (assets/last_bg.png)
+vanish-cam next-text                # Cycle Snap mode excuse text
+vanish-cam menu                     # Toggle the local H control menu
+vanish-cam status                   # Human-readable status + desktop notification
+vanish-cam status --json            # Machine-readable JSON for Noctalia / Waybar plugins
+```
+
+### IPC Files (For Future Noctalia / Bar Plugins)
+- **Live State (`/tmp/vanish_cam.state.json`):** Updated atomically (`running`, `pid`, `mode`, `phase`, `gestures_paused`, `snap_message`, `updated_at`).
+- **Command Queue (`/tmp/vanish_cam.cmd`):** Append any command (`vanish`, `reappear`, `action`, `pause`, `recapture`, `load-bg`, `next-text`, `help`, `quit`) and the main loop consumes it on the next frame (~33 ms).
+
+---
+
+## Controls (Preview Window Focused or Clickable via `H` Menu)
+
+- `H` (or click `[H] MENU` pill): Toggle interactive clickable local control menu
 - `SPACE`: Recapture empty room background (`ENTER` during countdown captures immediately)
 - `B`: Load last saved room background (`assets/last_bg.png`)
 - `G`: Pause / resume gesture detection
 - `V`: Manually trigger the active vanish effect (disabled in `goku` mode)
-- `R`: Reappear / rebuild (disabled in `goku` mode)
+- `R`: Smoothly reappear / rebuild (disabled in `goku` mode)
 - `T`: Cycle Snap mode excuse text (`BRB...`, `GONE`, `AFK`, `MY INTERNET DIED`, `IN A MEETING`, or custom `--snap-text`)
 - `F`: Toggle fullscreen
 - `Q` or `ESC`: Quit and release cameras

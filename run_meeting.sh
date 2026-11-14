@@ -33,7 +33,9 @@ fi
 ARGS=("$@")
 [[ " ${ARGS[*]} " == *" --mode "* ]] || ARGS+=(--mode naruto)
 [[ " ${ARGS[*]} " == *" --camera "* ]] || ARGS+=(--camera 0)
+[[ " ${ARGS[*]} " == *" --bg-delay "* ]] || ARGS+=(--bg-delay 7)
 [[ " ${ARGS[*]} " == *" --async-gestures "* ]] || ARGS+=(--async-gestures)
+[[ " ${ARGS[*]} " == *" --preview-hud "* ]] || ARGS+=(--preview-hud)
 
 echo "[run_meeting] Virtual camera: $DEVICE (pick 'VanishCam' in your meeting app)"
 # The pip OpenCV build only ships the Qt xcb plugin, so route this app through XWayland.
