@@ -1,0 +1,27 @@
+{
+  "panel": {
+    "title": "VanishCam Studio",
+    "stopped": "Stopped (/dev/video2 idle)",
+    "vanishNow": "Vanish Now (V)",
+    "reappearNow": "Reappear Smoothly Now (R)",
+    "freezeFrame": "Freeze Frame (Z)",
+    "unfreezeFrame": "Unfreeze Frame (Z)",
+    "ghostEchoOn": "Ghost Echo: ON (E)",
+    "ghostEchoOff": "Ghost Echo: OFF (E)",
+    "pauseGestures": "Pause Gestures (G)",
+    "resumeGestures": "Resume Gestures (G)",
+    "hidePreview": "Hide Preview (P)",
+    "showPreview": "Show Preview (P)",
+    "effectMode": "Effect Mode (Live Hot-Swap)",
+    "snapExcuse": "Snap Void Particle Excuse",
+    "loadRoom": "Load Saved Room (B)",
+    "recaptureRoom": "Recapture Room (7s)"
+  },
+  "settings": {
+    "title": "VanishCam Bar & Launch Settings",
+    "defaultMode": "Default Launch Mode",
+    "compactBar": "Compact Bar Icon Only",
+    "hideWhenOff": "Hide Bar Widget When Off",
+    "cliCommand": "CLI Command / Path"
+  }
+}

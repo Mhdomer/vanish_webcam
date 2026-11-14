@@ -16,16 +16,18 @@ Item {
     readonly property var mainInstance: pluginApi ? pluginApi.mainInstance : null
 
     property bool panelReady: true
-    property real contentPreferredWidth: 410 * Style.uiScaleRatio
-    property real contentPreferredHeight: 510 * Style.uiScaleRatio
+    property real contentPreferredWidth: 420 * Style.uiScaleRatio
+    property real contentPreferredHeight: 590 * Style.uiScaleRatio
 
     readonly property bool camRunning: mainInstance ? mainInstance.camRunning : false
     readonly property string camMode: mainInstance ? mainInstance.camMode : "snap"
     readonly property string camPhase: mainInstance ? mainInstance.camPhase : "off"
     readonly property bool gesturesPaused: mainInstance ? mainInstance.gesturesPaused : false
     readonly property bool previewVisible: mainInstance ? mainInstance.previewVisible : true
+    readonly property bool ghostEcho: mainInstance ? mainInstance.ghostEcho : false
     readonly property string snapMessage: mainInstance ? mainInstance.snapMessage : "BRB..."
 
+    readonly property bool isFrozen: camRunning && camPhase === "frozen"
     readonly property bool isVanished: camRunning && (camPhase === "vanished" || camPhase.indexOf("vanish") !== -1 || camPhase.indexOf("disappear") !== -1)
 
     readonly property var modesModel: [
@@ -75,14 +77,14 @@ Item {
                         height: 40 * Style.uiScaleRatio
                         radius: Style.radiusM
                         color: root.camRunning
-                            ? (root.isVanished ? Qt.alpha(Color.mSecondary, 0.22) : Qt.alpha(Color.mPrimary, 0.22))
+                            ? ((root.isVanished || root.isFrozen) ? Qt.alpha(Color.mSecondary, 0.22) : Qt.alpha(Color.mPrimary, 0.22))
                             : Color.mSurface
 
                         NIcon {
                             anchors.centerIn: parent
-                            icon: !root.camRunning ? "video-off" : (root.isVanished ? "eye-off" : "video")
+                            icon: !root.camRunning ? "video-off" : ((root.isVanished || root.isFrozen) ? "eye-off" : "video")
                             pointSize: Style.fontSizeL
-                            color: !root.camRunning ? Color.mOnSurfaceVariant : (root.isVanished ? Color.mSecondary : Color.mPrimary)
+                            color: !root.camRunning ? Color.mOnSurfaceVariant : ((root.isVanished || root.isFrozen) ? Color.mSecondary : Color.mPrimary)
                         }
                     }
 
@@ -134,22 +136,48 @@ Item {
                         Layout.fillWidth: true
                         text: !root.camRunning
                             ? "Start & Ready Camera"
-                            : (root.isVanished ? "Reappear Smoothly Now (R)" : "Vanish Now (V)")
+                            : ((root.isVanished || root.isFrozen) ? "Reappear Smoothly Now (R)" : "Vanish Now (V)")
                         outlined: false
                         backgroundColor: !root.camRunning
                             ? Color.mSurface
-                            : (root.isVanished ? Color.mSecondary : Color.mPrimary)
+                            : ((root.isVanished || root.isFrozen) ? Color.mSecondary : Color.mPrimary)
                         textColor: !root.camRunning
                             ? Color.mOnSurface
-                            : (root.isVanished ? Color.mOnSecondary : Color.mOnPrimary)
+                            : ((root.isVanished || root.isFrozen) ? Color.mOnSecondary : Color.mOnPrimary)
                         onClicked: {
                             if (mainInstance) mainInstance.triggerAction();
                         }
                     }
 
-                    RowLayout {
+                    GridLayout {
                         Layout.fillWidth: true
-                        spacing: Style.marginS
+                        columns: 2
+                        rowSpacing: Style.marginXS
+                        columnSpacing: Style.marginXS
+
+                        NButton {
+                            Layout.fillWidth: true
+                            enabled: root.camRunning
+                            text: root.isFrozen ? "Unfreeze Frame (Z)" : "Freeze Frame (Z)"
+                            outlined: false
+                            backgroundColor: root.isFrozen ? Qt.alpha(Color.mSecondary, 0.28) : Color.mSurface
+                            textColor: root.isFrozen ? Color.mSecondary : Color.mOnSurface
+                            onClicked: {
+                                if (mainInstance) mainInstance.toggleFreeze();
+                            }
+                        }
+
+                        NButton {
+                            Layout.fillWidth: true
+                            enabled: root.camRunning
+                            text: root.ghostEcho ? "Ghost Echo: ON (E)" : "Ghost Echo: OFF (E)"
+                            outlined: false
+                            backgroundColor: root.ghostEcho ? Qt.alpha(Color.mPrimary, 0.25) : Color.mSurface
+                            textColor: root.ghostEcho ? Color.mPrimary : Color.mOnSurface
+                            onClicked: {
+                                if (mainInstance) mainInstance.toggleEcho();
+                            }
+                        }
 
                         NButton {
                             Layout.fillWidth: true
@@ -221,7 +249,7 @@ Item {
                 }
             }
 
-            // 4. Snap Void Excuse Message Picker
+            // 4. Snap Void Excuse Message Picker & Custom Editor
             NBox {
                 Layout.fillWidth: true
                 implicitHeight: snapCol.implicitHeight + Style.marginM * 2
@@ -247,6 +275,50 @@ Item {
                             pointSize: Style.fontSizeXS
                             font.bold: true
                             color: Color.mPrimary
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Style.marginXS
+
+                        TextField {
+                            id: customExcuseField
+                            Layout.fillWidth: true
+                            placeholderText: "Type custom excuse (e.g. COFFEE BREAK)..."
+                            color: Color.mOnSurface
+                            placeholderTextColor: Color.mOnSurfaceVariant
+                            font.pointSize: Style.fontSizeXS
+                            maximumLength: 22
+                            leftPadding: Style.marginS
+                            rightPadding: Style.marginS
+                            topPadding: 6
+                            bottomPadding: 6
+                            background: Rectangle {
+                                radius: Style.radiusS
+                                color: Color.mSurface
+                                border.color: customExcuseField.activeFocus ? Color.mPrimary : Style.capsuleBorderColor
+                                border.width: 1
+                            }
+                            onAccepted: {
+                                if (mainInstance && customExcuseField.text.trim().length > 0) {
+                                    mainInstance.setExcuse(customExcuseField.text);
+                                    customExcuseField.text = "";
+                                }
+                            }
+                        }
+
+                        NButton {
+                            text: "Set"
+                            outlined: false
+                            backgroundColor: Color.mPrimary
+                            textColor: Color.mOnPrimary
+                            onClicked: {
+                                if (mainInstance && customExcuseField.text.trim().length > 0) {
+                                    mainInstance.setExcuse(customExcuseField.text);
+                                    customExcuseField.text = "";
+                                }
+                            }
                         }
                     }
 

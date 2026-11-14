@@ -14,7 +14,7 @@ Video is processed locally on your computer. Nothing is recorded or sent to a se
 | `snap` | Pinch thumb + middle finger, then snap apart (peace sign to rebuild) | Dissolve -> blackhole vortex -> particle excuse text (`BRB...`, `GONE`, `AFK`, `MY INTERNET DIED`, `IN A MEETING`) -> dust crumble | `assets/snap.wav` & `assets/chime.wav` |
 | `normal` | V sign (index + middle) | Silhouette dissolves upward with sparkles (~3.6s) | None |
 | `particles` | V sign (index + middle) | Silhouette breaks into wind-drifted fragments (~2.1s) | None |
-| `goku` | Index + middle fingers held together on forehead | Instant Transmission speed lines & teleport (repeat gesture to return; `V`/`R` disabled) | `assets/teleport.MP3` |
+| `goku` | Index + middle fingers held together on forehead (or `V` / `R` / menu) | Instant Transmission speed lines & teleport | `assets/teleport.MP3` |
 | `itachi` | Both hands touching in front of chest | Crow swarm dispersion, blood-red tint, Sharingan flash (repeat gesture or `R` to reform) | None |
 
 ---
@@ -92,9 +92,11 @@ vanish-cam bg --mode snap           # Start in background (uses saved room frame
 vanish-cam stop                     # Stop running instance cleanly
 vanish-cam toggle --mode snap       # Start if off, stop if running
 vanish-cam mode naruto              # Hot-swap effect mode live (snap, naruto, normal, particles, itachi, goku)
-vanish-cam action                   # Smart toggle: vanish if visible, reappear if vanished
+vanish-cam action                   # Smart toggle: vanish if visible, reappear if vanished/frozen
 vanish-cam vanish                   # Trigger vanish effect immediately
 vanish-cam reappear                 # Smoothly reappear / rebuild immediately
+vanish-cam freeze                   # Freeze / unfreeze current webcam frame (0% MediaPipe CPU)
+vanish-cam echo                     # Toggle Ghost Echo spectral replay while vanished
 vanish-cam pause                    # Toggle gesture detection (ON <-> PAUSED)
 vanish-cam preview                  # Show / hide the local preview window on demand
 vanish-cam recapture                # Start room background recapture countdown
@@ -107,13 +109,13 @@ vanish-cam status --json            # Machine-readable JSON for Noctalia / Wayba
 ```
 
 ### Noctalia v4 Shell Plugin (`noctalia-plugin/`)
-Symlink `noctalia-plugin/` to `~/.config/noctalia/plugins/vanish-cam` and enable `"vanish-cam"` in `~/.config/noctalia/plugins.json`.
-- **Top Bar Capsule (`BarWidget.qml`):** Color-coded status (`OFF`, `LIVE`, `PAUSED`, `VANISHED`). Left-click opens the control panel, middle-click triggers smart vanish/reappear, right-click opens quick actions.
-- **Dropdown Studio Panel (`Panel.qml`):** Start/stop toggle, primary Vanish/Reappear button, Pause Gestures, Show/Hide Preview, 6-mode live hot-swap grid, Snap Void excuse picker, and room background controls.
+Symlink `noctalia-plugin/` to `~/.config/noctalia/plugins/vanish-cam` and enable `"vanish-cam"` in `~/.config/noctalia/plugins.json`. Includes `i18n/en.json`, `README.md`, and a configurable CLI command path for `noctalia-dev/noctalia-plugins` store readiness.
+- **Top Bar Capsule (`BarWidget.qml`):** Color-coded status (`OFF`, `CALIB`, `SNAP`, `FROZEN`, `PAUSED`, `VANISHED`). Left-click opens the control panel, middle-click triggers smart vanish/reappear, right-click opens quick actions.
+- **Dropdown Studio Panel (`Panel.qml`):** Start/stop toggle, primary Vanish/Reappear button (works across all 6 modes including Goku and Itachi), Freeze Frame (`Z`), Ghost Echo (`E`), Pause Gestures (`G`), Show/Hide Preview (`P`), 6-mode live hot-swap grid, editable Snap Void custom excuse input + preset buttons, and room background controls.
 
 ### IPC Files
-- **Live State (`/tmp/vanish_cam.state.json`):** Updated atomically (`running`, `pid`, `mode`, `phase`, `gestures_paused`, `preview_visible`, `snap_message`, `updated_at`).
-- **Command Queue (`/tmp/vanish_cam.cmd`):** Append any command (`vanish`, `reappear`, `toggle-action`, `pause`, `preview`, `mode:<name>`, `snap-text:<text>`, `recapture`, `load-bg`, `next-text`, `help`, `quit`) and the main loop consumes it on the next frame (~33 ms).
+- **Live State (`/tmp/vanish_cam.state.json`):** Updated atomically (`running`, `pid`, `mode`, `phase`, `gestures_paused`, `preview_visible`, `ghost_echo`, `snap_message`, `updated_at`).
+- **Command Queue (`/tmp/vanish_cam.cmd`):** Append any command (`vanish`, `reappear`, `toggle-action`, `freeze`, `echo`, `pause`, `preview`, `mode:<name>`, `snap-text:<text>`, `recapture`, `load-bg`, `next-text`, `help`, `quit`) and the main loop consumes it on the next frame (~33 ms).
 
 ---
 
@@ -121,13 +123,15 @@ Symlink `noctalia-plugin/` to `~/.config/noctalia/plugins/vanish-cam` and enable
 
 - `H` (or click `[H] MENU` pill): Toggle interactive clickable local control menu
 - `1` to `6`: Live hot-swap mode (`1` Snap, `2` Naruto, `3` Normal, `4` Particles, `5` Itachi, `6` Goku)
+- `V`: Manually trigger the active vanish effect (works across all 6 modes, including Goku and Itachi)
+- `R`: Smoothly reappear / rebuild / unfreeze (works across all 6 modes)
+- `Z`: Freeze / unfreeze current camera frame (0% MediaPipe CPU while frozen)
+- `E`: Toggle Ghost Echo spectral replay while vanished
 - `P`: Hide / show local preview window (use `vanish-cam preview` to bring it back)
 - `SPACE`: Recapture empty room background (`ENTER` during countdown captures immediately)
 - `B`: Load last saved room background (`assets/last_bg.png`)
 - `G`: Pause / resume gesture detection
-- `V`: Manually trigger the active vanish effect (disabled in `goku` mode)
-- `R`: Smoothly reappear / rebuild (disabled in `goku` mode)
-- `T`: Cycle Snap mode excuse text (`BRB...`, `GONE`, `AFK`, `MY INTERNET DIED`, `IN A MEETING`, or custom `--snap-text`)
+- `T`: Cycle Snap mode excuse text (or click `Edit Custom Excuse` in the `H` menu to type custom text live)
 - `F`: Toggle fullscreen
 - `Q` or `ESC`: Quit and release cameras
 

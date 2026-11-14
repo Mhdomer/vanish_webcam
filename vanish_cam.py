@@ -132,6 +132,9 @@ class AppState:
     gestures_paused: bool = False
     show_help: bool = False
     preview_visible: bool = True
+    ghost_echo: bool = False
+    editing_text: bool = False
+    edit_buffer: str = ""
 
 
 def positive_fps(value: str) -> float:
@@ -965,6 +968,7 @@ def write_ipc_state(
         "phase": state.phase if (running and state is not None) else "off",
         "gestures_paused": bool(state.gestures_paused) if (running and state is not None) else False,
         "preview_visible": bool(state.preview_visible) if (running and state is not None) else False,
+        "ghost_echo": bool(state.ghost_echo) if (running and state is not None) else False,
         "snap_message": snap_message if (running and mode == "snap") else "",
         "updated_at": round(time.time(), 2),
     }
@@ -989,37 +993,44 @@ def poll_ipc_commands() -> list[str]:
 
 
 def _hud_menu_buttons(w: int, h: int, mode: str, state: AppState) -> list[tuple[str, str, tuple[int, int, int, int]]]:
-    action_label = "Reappear Now (R)" if state.phase == "vanished" else "Vanish Now (V)"
-    action_cmd = "reappear" if state.phase == "vanished" else "vanish"
+    is_away = state.phase in ("vanished", "frozen")
+    action_label = "Reappear Now (R)" if is_away else "Vanish Now (V)"
+    action_cmd = "reappear" if is_away else "vanish"
+    freeze_label = "Unfreeze Camera (Z)" if state.phase == "frozen" else "Freeze Frame (Z)"
     pause_label = "Resume Gestures (G)" if state.gestures_paused else "Pause Gestures (G)"
+    echo_label = f"Ghost Echo: {'ON' if state.ghost_echo else 'OFF'} (E)"
     items = [
         (action_cmd, action_label),
+        ("freeze", freeze_label),
         ("pause", pause_label),
+        ("echo", echo_label),
         ("recapture", "Recapture Room (SPACE)"),
         ("load-bg", "Load Saved Room (B)"),
     ]
     if mode == "snap":
         items.append(("next-text", "Next Snap Excuse (T)"))
+        edit_label = f"Type: {state.edit_buffer}_ [ENTER]" if state.editing_text else "Edit Custom Excuse (Click)"
+        items.append(("edit-text", edit_label))
     items.append(("preview", "Hide Preview Window (P)"))
     items.append(("help", "Close Menu (H)"))
 
     box_w = min(w - 40, 360)
-    row_h, gap = 32, 7
-    mode_row_h = 30
-    box_h = 88 + len(items) * (row_h + gap)
+    row_h, gap = 29, 5
+    mode_row_h = 28
+    box_h = 82 + len(items) * (row_h + gap)
     bx1 = (w - box_w) // 2
-    by1 = max(14, (h - box_h) // 2)
+    by1 = max(10, (h - box_h) // 2)
     buttons = []
     modes = ("snap", "naruto", "normal", "particles", "itachi", "goku")
     inner_w = box_w - 32
     cell_w = (inner_w - 5 * 4) // 6
-    my1 = by1 + 40
+    my1 = by1 + 36
     for idx, m in enumerate(modes):
         mx1 = bx1 + 16 + idx * (cell_w + 4)
         mx2 = mx1 + cell_w if idx < 5 else bx1 + box_w - 16
         buttons.append((f"mode:{m}", m[:4].upper(), (mx1, my1, mx2, my1 + mode_row_h)))
     for idx, (cmd, label) in enumerate(items):
-        y1 = my1 + mode_row_h + 10 + idx * (row_h + gap)
+        y1 = my1 + mode_row_h + 8 + idx * (row_h + gap)
         buttons.append((cmd, label, (bx1 + 16, y1, bx1 + box_w - 16, y1 + row_h)))
     return buttons
 
@@ -1035,6 +1046,10 @@ def draw_preview_hud(
     h, w = out.shape[:2]
     gesture_state = "PAUSED" if state.gestures_paused else "ON"
     mode_tag = f"SNAP: {snap_message}" if mode == "snap" and snap_message else mode.upper()
+    if state.phase == "frozen":
+        mode_tag = f"{mode_tag} [FROZEN]"
+    elif state.ghost_echo:
+        mode_tag = f"{mode_tag} [ECHO]"
     pill = f"{mode_tag}  |  GESTURES {gesture_state}  |  [H] MENU"
     (tw, th), _ = cv2.getTextSize(pill, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
     pad_x, pad_y = 12, 8
@@ -1048,29 +1063,35 @@ def draw_preview_hud(
     if state.show_help:
         buttons = _hud_menu_buttons(w, h, mode, state)
         bx1 = buttons[0][2][0] - 16
-        by1 = buttons[0][2][1] - 40
+        by1 = buttons[0][2][1] - 36
         bx2 = buttons[-1][2][2] + 16
-        by2 = min(h - 14, buttons[-1][2][3] + 14)
+        by2 = min(h - 10, buttons[-1][2][3] + 12)
         panel = out[by1:by2, bx1:bx2]
         bg = np.full_like(panel, (20, 22, 26))
         cv2.addWeighted(bg, 0.86, panel, 0.14, 0, panel)
         cv2.rectangle(out, (bx1, by1), (bx2, by2), (111, 142, 153), 1)
-        cv2.putText(out, "LOCAL CONTROL MENU (Preview Only)", (bx1 + 18, by1 + 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 215, 255), 1, cv2.LINE_AA)
+        cv2.putText(out, "LOCAL CONTROL MENU (Preview Only)", (bx1 + 18, by1 + 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 215, 255), 1, cv2.LINE_AA)
         for cmd, label, (rx1, ry1, rx2, ry2) in buttons:
             if cmd.startswith("mode:"):
                 is_active = cmd.split(":", 1)[1] == mode
                 fill = (0, 140, 180) if is_active else (36, 40, 46)
                 cv2.rectangle(out, (rx1, ry1), (rx2, ry2), fill, -1)
                 cv2.rectangle(out, (rx1, ry1), (rx2, ry2), (0, 215, 255) if is_active else (80, 95, 105), 1)
-                cv2.putText(out, label, (rx1 + 6, ry1 + 20),
+                cv2.putText(out, label, (rx1 + 6, ry1 + 19),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 255, 255) if is_active else (190, 200, 208), 1, cv2.LINE_AA)
             else:
-                fill = (52, 92, 76) if cmd in ("vanish", "reappear") else (42, 47, 54)
+                if cmd in ("vanish", "reappear"):
+                    fill = (52, 92, 76)
+                elif cmd == "edit-text" and state.editing_text:
+                    fill = (95, 72, 30)
+                else:
+                    fill = (42, 47, 54)
                 cv2.rectangle(out, (rx1, ry1), (rx2, ry2), fill, -1)
-                cv2.rectangle(out, (rx1, ry1), (rx2, ry2), (95, 122, 132), 1)
-                cv2.putText(out, label, (rx1 + 14, ry1 + 21),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (235, 240, 244), 1, cv2.LINE_AA)
+                border_col = (0, 215, 255) if (cmd == "edit-text" and state.editing_text) else (95, 122, 132)
+                cv2.rectangle(out, (rx1, ry1), (rx2, ry2), border_col, 1)
+                cv2.putText(out, label, (rx1 + 12, ry1 + 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.43, (235, 240, 244), 1, cv2.LINE_AA)
     return out
 
 
@@ -1185,6 +1206,9 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     log_anchor: tuple[int, int, int] | None = None
     log_cache: dict[int, np.ndarray] = {}
     vanished_frame: np.ndarray | None = None
+    frozen_frame: np.ndarray | None = None
+    echo_buffer: list[np.ndarray] = []
+    last_echo_sample = 0.0
     particle_effect: ParticleEffect | None = None
     itachi_effect: ItachiCrowEffect | None = None
     itachi_gate = ItachiGestureGate() if mode == "itachi" else None
@@ -1208,6 +1232,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     last_ipc_write = 0.0
 
     def on_preview_mouse(event, x, y, flags, userdata):
+        nonlocal snap_messages, snap_msg_idx, last_ipc_signature
         if event != cv2.EVENT_LBUTTONUP:
             return
         w, h = frame_size
@@ -1217,10 +1242,24 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     if cmd.startswith("mode:"):
                         pending_mode_switch.append(cmd.split(":", 1)[1])
                         return
+                    if cmd == "edit-text":
+                        if state.editing_text:
+                            custom = state.edit_buffer.strip()
+                            if custom:
+                                snap_messages = (custom, *VOID_MESSAGES)
+                                snap_msg_idx = 0
+                                last_ipc_signature = None
+                            state.editing_text = False
+                        else:
+                            state.edit_buffer = ""
+                            state.editing_text = True
+                        return
                     key_map = {
                         "vanish": ord("v"),
                         "reappear": ord("r"),
+                        "freeze": ord("z"),
                         "pause": ord("g"),
+                        "echo": ord("e"),
                         "recapture": ord(" "),
                         "load-bg": ord("b"),
                         "next-text": ord("t"),
@@ -1345,9 +1384,12 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 raise RuntimeError("La webcam ha smesso di restituire immagini.")
 
             skip_flip = (
-                state.phase == "vanished"
-                and vanished_frame is not None
-                and (state.gestures_paused or mode in ("normal", "naruto", "particles"))
+                (state.phase == "frozen" and frozen_frame is not None)
+                or (
+                    state.phase == "vanished"
+                    and vanished_frame is not None
+                    and (state.gestures_paused or mode in ("normal", "naruto", "particles"))
+                )
             )
             if not args.no_mirror and not skip_flip:
                 camera_frame = cv2.flip(camera_frame, 1)
@@ -1373,6 +1415,12 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
 
             elapsed_ms = int((now - started) * 1000)
             mp_image = None
+
+            if state.ghost_echo and state.phase == "ready" and now - last_echo_sample >= 0.10:
+                last_echo_sample = now
+                echo_buffer.append(camera_frame.copy())
+                if len(echo_buffer) > 25:
+                    echo_buffer.pop(0)
 
             if (mode == "itachi" and background is not None
                     and not state.gestures_paused
@@ -1435,10 +1483,11 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 elif goku_gate.hold_started is None:
                     goku_countdown_remaining = None
 
+            snap_interval = 0.22 if state.phase == "vanished" else 0.05
             if (mode == "snap" and background is not None
                     and not state.gestures_paused
                     and state.phase in ("ready", "vanished")
-                    and now - state.last_gesture_check >= 0.05):
+                    and now - state.last_gesture_check >= snap_interval):
                 state.last_gesture_check = now
                 rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
@@ -1528,13 +1577,26 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     state.phase = "ready"
                     snap_rebuild = None
 
+            elif state.phase == "frozen":
+                if frozen_frame is None:
+                    frozen_frame = camera_frame.copy()
+                display = frozen_frame
+
             elif state.phase == "vanished":
                 if vanished_frame is None:
                     vanished_frame = background.copy()
                     if mode == "naruto" and log_anchor is not None:
                         overlay_log(vanished_frame, log_sprite, landed_log_anchor(log_anchor, height),
                                     cache=log_cache)
-                display = vanished_frame
+                if state.ghost_echo and echo_buffer and int(now * 0.45) % 2 == 0:
+                    echo_idx = int((now * 10.0) % len(echo_buffer))
+                    ghost = echo_buffer[echo_idx].copy()
+                    ghost[:, :, 2] = (ghost[:, :, 2] * 0.35).astype(np.uint8)
+                    ghost[:, :, 0] = np.clip(ghost[:, :, 0].astype(np.int16) + 55, 0, 255).astype(np.uint8)
+                    alpha = 0.24 + 0.08 * float(np.sin(now * 9.0))
+                    display = cv2.addWeighted(ghost, alpha, vanished_frame, 1.0 - alpha, 0)
+                else:
+                    display = vanished_frame
 
             elif state.phase == "reappearing" and state.vanish_started is not None:
                 progress = min(1.0, max(0.0, (time.perf_counter() - state.vanish_started) / REAPPEAR_SECONDS))
@@ -1653,7 +1715,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 send_virtual_frame(virtual_camera, display)
             frame_size[0], frame_size[1] = width, height
             active_snap_msg = snap_messages[snap_msg_idx % len(snap_messages)] if mode == "snap" else ""
-            ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, active_snap_msg)
+            ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, state.ghost_echo, active_snap_msg)
             if ipc_sig != last_ipc_signature or (now - last_ipc_write >= 2.0):
                 write_ipc_state(True, mode, state, active_snap_msg)
                 last_ipc_signature = ipc_sig
@@ -1719,9 +1781,13 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     if target_mode in ALL_MODES:
                         pending_mode_switch.append(target_mode)
                 elif ipc_cmd == "toggle-action":
-                    pending_keys.append(ord("r") if state.phase == "vanished" else ord("v"))
+                    pending_keys.append(ord("r") if state.phase in ("vanished", "frozen") else ord("v"))
                 elif ipc_cmd == "preview":
                     pending_keys.append(ord("p"))
+                elif ipc_cmd == "freeze":
+                    pending_keys.append(ord("z"))
+                elif ipc_cmd == "echo":
+                    pending_keys.append(ord("e"))
                 else:
                     cmd_map = {
                         "vanish": ord("v"),
@@ -1741,6 +1807,25 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 switch_mode(pending_mode_switch.pop(0))
 
             raw_key = (cv2.waitKey(1) & 0xFF) if state.preview_visible else 255
+            if state.editing_text and raw_key not in (0, 255):
+                if raw_key in (10, 13):
+                    custom = state.edit_buffer.strip()
+                    if custom:
+                        snap_messages = (custom, *VOID_MESSAGES)
+                        snap_msg_idx = 0
+                        last_ipc_signature = None
+                        print(f"[Snap] Custom excuse set: {custom}")
+                    state.editing_text = False
+                elif raw_key == 27:
+                    state.editing_text = False
+                elif raw_key in (8, 127):
+                    state.edit_buffer = state.edit_buffer[:-1]
+                elif 32 <= raw_key <= 126 and len(state.edit_buffer) < 22:
+                    state.edit_buffer += chr(raw_key).upper()
+                if virtual_camera is not None:
+                    virtual_camera.sleep_until_next_frame()
+                continue
+
             key = pending_keys.pop(0) if (raw_key in (0, 255) and pending_keys) else raw_key
             if key in (ord("q"), 27):
                 break
@@ -1749,6 +1834,20 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 switch_mode(hotkey_modes[key - ord("1")])
             elif key == ord("p") and preview_hud:
                 toggle_preview_window()
+            elif key == ord("z") and preview_hud:
+                if state.phase == "frozen":
+                    state.phase = "ready"
+                    frozen_frame = None
+                    print("[Webcam] Unfroze camera.")
+                elif state.phase == "ready":
+                    frozen_frame = display.copy()
+                    state.phase = "frozen"
+                    print("[Webcam] Camera frozen (press Z or R to unfreeze).")
+            elif key == ord("e") and preview_hud:
+                state.ghost_echo = not state.ghost_echo
+                if not state.ghost_echo:
+                    echo_buffer.clear()
+                print(f"[Webcam] Ghost Echo {'enabled' if state.ghost_echo else 'disabled'}.")
             elif key in (10, 13) and state.phase == "calibrating":
                 state.calibration_started = min(
                     state.calibration_started,
@@ -1763,6 +1862,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 last_mask = None
                 last_mask_at = float("-inf")
                 vanished_frame = None
+                frozen_frame = None
                 particle_effect = None
                 itachi_effect = None
                 if itachi_gate is not None:
@@ -1790,6 +1890,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     state.phase = "ready"
                     state.vanish_started = None
                     vanished_frame = None
+                    frozen_frame = None
                     bg_ready_until = now + 1.5
                     print("[Webcam] Loaded saved background.")
                 else:
@@ -1797,7 +1898,11 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             elif key == ord("r"):
                 if skip_flip and not args.no_mirror:
                     camera_frame = cv2.flip(camera_frame, 1)
-                if background is not None and mode == "snap" and state.phase == "vanished":
+                if state.phase == "frozen":
+                    state.phase = "ready"
+                    frozen_frame = None
+                    print("[Webcam] Unfroze camera.")
+                elif background is not None and mode == "snap" and state.phase == "vanished":
                     rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
                     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                     mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
@@ -1814,11 +1919,27 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     try:
                         itachi_effect = ItachiCrowEffect(camera_frame, mask)
                     except ValueError:
-                        print("[Itachi] Step back into frame before reappearing.")
+                        state.phase = "reappearing"
+                        state.vanish_started = time.perf_counter()
+                        vanished_frame = None
                     else:
                         state.phase = "itachi_appearing"
                         state.vanish_started = time.perf_counter()
                         vanished_frame = None
+                elif background is not None and mode == "goku" and state.phase == "vanished" and preview_hud:
+                    rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
+                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                    mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                    if cv2.findNonZero((mask > 0.04).astype(np.uint8)) is None:
+                        cv2.ellipse(mask, (width // 2, int(height * 0.58)), (width // 5, int(height * 0.35)), 0, 0, 360, 1.0, -1)
+                    goku_effect = GokuTeleport(camera_frame, background, mask)
+                    if goku_gate is not None:
+                        goku_gate.reset()
+                    goku_countdown_remaining = None
+                    state.phase = "goku_appearing"
+                    state.vanish_started = time.perf_counter()
+                    if vanish_sound is not None:
+                        vanish_sound.play()
                 elif background is not None and mode not in ("goku", "itachi") and state.phase == "vanished":
                     if preview_hud:
                         state.phase = "reappearing"
@@ -1858,6 +1979,20 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 else:
                     state.phase = "itachi_disappearing"
                     state.vanish_started = time.perf_counter()
+            elif key == ord("v") and background is not None and mode == "goku" and state.phase == "ready" and preview_hud:
+                rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                if cv2.findNonZero((mask > 0.04).astype(np.uint8)) is None:
+                    cv2.ellipse(mask, (width // 2, int(height * 0.58)), (width // 5, int(height * 0.35)), 0, 0, 360, 1.0, -1)
+                goku_effect = GokuTeleport(camera_frame, background, mask)
+                if goku_gate is not None:
+                    goku_gate.reset()
+                goku_countdown_remaining = None
+                state.phase = "goku_vanishing"
+                state.vanish_started = time.perf_counter()
+                if vanish_sound is not None:
+                    vanish_sound.play()
             elif key == ord("v") and background is not None and mode not in ("goku", "itachi"):
                 state.phase = "naruto_vanishing" if mode == "naruto" else "vanishing"
                 state.vanish_started = time.perf_counter()

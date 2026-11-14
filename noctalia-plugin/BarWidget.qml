@@ -30,10 +30,12 @@ Item {
 
     visible: !hideWhenOff || camRunning
 
+    readonly property bool isFrozen: camRunning && camPhase === "frozen"
     readonly property bool isVanished: camRunning && (camPhase === "vanished" || camPhase.indexOf("vanish") !== -1 || camPhase.indexOf("disappear") !== -1)
 
     readonly property string statusIcon: {
         if (!camRunning) return "video-off";
+        if (isFrozen) return "snowflake";
         if (isVanished) return "eye-off";
         if (gesturesPaused) return "player-pause";
         return "video";
@@ -42,6 +44,7 @@ Item {
     readonly property string statusLabel: {
         if (!camRunning) return "OFF";
         if (camPhase === "calibrating") return "CALIB";
+        if (isFrozen) return "FROZEN";
         if (isVanished) return "VANISHED";
         if (gesturesPaused) return "PAUSED";
         return camMode.toUpperCase();
@@ -49,7 +52,7 @@ Item {
 
     readonly property color statusColor: {
         if (!camRunning) return Color.mOnSurfaceVariant;
-        if (isVanished) return Color.mSecondary;
+        if (isFrozen || isVanished) return Color.mSecondary;
         if (gesturesPaused) return Color.mError;
         return Color.mPrimary;
     }
@@ -70,7 +73,7 @@ Item {
         radius: Style.radiusL
         color: mouseArea.containsMouse
             ? Color.mHover
-            : (root.isVanished ? Qt.alpha(Color.mSecondary, 0.18) : Style.capsuleColor)
+            : ((root.isVanished || root.isFrozen) ? Qt.alpha(Color.mSecondary, 0.18) : Style.capsuleColor)
         border.color: root.camRunning ? root.statusColor : Style.capsuleBorderColor
         border.width: root.camRunning ? 1 : Style.capsuleBorderWidth
 
@@ -111,9 +114,15 @@ Item {
                 "icon": root.camRunning ? "power" : "player-play"
             },
             {
-                "label": root.isVanished ? "Reappear Now (R)" : "Vanish Now (V)",
+                "label": (root.isVanished || root.isFrozen) ? "Reappear Now (R)" : "Vanish Now (V)",
                 "action": "action",
-                "icon": root.isVanished ? "eye" : "eye-off",
+                "icon": (root.isVanished || root.isFrozen) ? "eye" : "eye-off",
+                "visible": root.camRunning
+            },
+            {
+                "label": root.isFrozen ? "Unfreeze Frame (Z)" : "Freeze Frame (Z)",
+                "action": "freeze",
+                "icon": "player-pause",
                 "visible": root.camRunning
             },
             {
@@ -147,6 +156,7 @@ Item {
             if (!mainInstance) return;
             if (action === "power") mainInstance.togglePower();
             else if (action === "action") mainInstance.triggerAction();
+            else if (action === "freeze") mainInstance.toggleFreeze();
             else if (action === "pause") mainInstance.togglePause();
             else if (action === "preview") mainInstance.togglePreview();
             else if (action === "recapture") mainInstance.recaptureRoom();

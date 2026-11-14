@@ -1,10 +1,10 @@
 {
   "id": "vanish-cam",
   "name": "VanishCam",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minNoctaliaVersion": "4.4.1",
   "author": "Mohamed Makhlouf (Mhdomer)",
-  "description": "Live virtual webcam controller for VanishCam (Snap Void, Naruto, Particles, Itachi, Goku) with instant mode hot-swap, gesture pause, and smooth reappear.",
+  "description": "Live virtual webcam controller for VanishCam (Snap Void, Naruto, Particles, Itachi, Goku) with editable particle excuse text, freeze frame, ghost echo, and live mode hot-swap.",
   "license": "MIT",
   "repository": "https://github.com/Mhdomer/vanish_webcam",
   "tags": [
@@ -12,7 +12,9 @@
     "Panel",
     "Media",
     "Privacy",
-    "Niri"
+    "Niri",
+    "Hyprland",
+    "Sway"
   ],
   "entryPoints": {
     "main": "Main.qml",
@@ -27,7 +29,8 @@
     "defaultSettings": {
       "defaultMode": "snap",
       "compactBar": false,
-      "hideWhenOff": false
+      "hideWhenOff": false,
+      "cliCommand": "vanish-cam"
     }
   }
 }

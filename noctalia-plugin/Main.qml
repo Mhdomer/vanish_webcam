@@ -12,15 +12,15 @@ Item {
     readonly property string defaultMode: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.defaultMode) ? pluginApi.pluginSettings.defaultMode : "snap"
     readonly property bool compactBar: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.compactBar !== undefined) ? pluginApi.pluginSettings.compactBar : false
     readonly property bool hideWhenOff: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.hideWhenOff !== undefined) ? pluginApi.pluginSettings.hideWhenOff : false
+    readonly property string cliCommand: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.cliCommand) ? pluginApi.pluginSettings.cliCommand : "vanish-cam"
 
     property bool camRunning: false
     property string camMode: "snap"
     property string camPhase: "off"
     property bool gesturesPaused: false
     property bool previewVisible: true
+    property bool ghostEcho: false
     property string snapMessage: "BRB..."
-
-    readonly property string cliPath: "/home/mhdomar/.local/bin/vanish-cam"
 
     FileView {
         id: stateFileView
@@ -44,12 +44,14 @@ Item {
                     root.camPhase = data.phase || "ready";
                     root.gesturesPaused = Boolean(data.gestures_paused);
                     root.previewVisible = data.preview_visible !== undefined ? Boolean(data.preview_visible) : true;
+                    root.ghostEcho = Boolean(data.ghost_echo);
                     if (data.snap_message) {
                         root.snapMessage = data.snap_message;
                     }
                 } else {
                     root.camPhase = "off";
                     root.gesturesPaused = false;
+                    root.ghostEcho = false;
                 }
             } catch (e) {
                 root.camRunning = false;
@@ -76,7 +78,8 @@ Item {
     Component.onCompleted: stateFileView.reload()
 
     function runCli(args) {
-        Quickshell.execDetached([root.cliPath].concat(args));
+        const fullArgs = ["sh", "-c", "export PATH=\"$HOME/.local/bin:$PATH\"; exec \"$0\" \"$@\"", root.cliCommand].concat(args);
+        Quickshell.execDetached(fullArgs);
         burstPollTimer.restart();
     }
 
@@ -102,6 +105,14 @@ Item {
 
     function reappearNow() {
         if (root.camRunning) runCli(["reappear"]);
+    }
+
+    function toggleFreeze() {
+        if (root.camRunning) runCli(["freeze"]);
+    }
+
+    function toggleEcho() {
+        if (root.camRunning) runCli(["echo"]);
     }
 
     function togglePause() {
@@ -130,8 +141,10 @@ Item {
     }
 
     function setExcuse(text) {
-        root.snapMessage = text;
-        if (root.camRunning) runCli(["snap-text", text]);
+        const cleaned = (text || "").trim().toUpperCase();
+        if (!cleaned) return;
+        root.snapMessage = cleaned;
+        if (root.camRunning) runCli(["snap-text", cleaned]);
     }
 
     IpcHandler {
@@ -139,6 +152,8 @@ Item {
 
         function toggle() { root.togglePower(); }
         function action() { root.triggerAction(); }
+        function freeze() { root.toggleFreeze(); }
+        function echo() { root.toggleEcho(); }
         function pause() { root.togglePause(); }
         function preview() { root.togglePreview(); }
         function mode(name: string) { root.switchMode(name); }

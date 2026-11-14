@@ -56,7 +56,7 @@ case "$cmd" in
             "$0" bg "$@"
         fi
         ;;
-    vanish|reappear|pause|recapture|load-bg|next-text|fullscreen|preview)
+    vanish|reappear|pause|recapture|load-bg|next-text|fullscreen|preview|freeze|echo)
         send_cmd "$cmd"
         ;;
     mode)
@@ -119,6 +119,8 @@ Commands:
   action                Vanish if ready, or reappear if vanished
   vanish                Trigger vanish effect now
   reappear              Reappear smoothly now
+  freeze                Freeze / unfreeze current camera frame (0% CPU)
+  echo                  Toggle Ghost Echo replay while vanished
   pause                 Pause / resume gesture recognition
   preview               Show / hide the local preview window
   recapture             Start empty-room background countdown

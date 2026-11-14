@@ -17,6 +17,7 @@ ColumnLayout {
     property string editDefaultMode: cfg.defaultMode ?? defaults.defaultMode ?? "snap"
     property bool editCompactBar: cfg.compactBar ?? defaults.compactBar ?? false
     property bool editHideWhenOff: cfg.hideWhenOff ?? defaults.hideWhenOff ?? false
+    property string editCliCommand: cfg.cliCommand ?? defaults.cliCommand ?? "vanish-cam"
 
     readonly property var modeChoices: [
         { key: "snap", name: "Snap Void (Particle Excuse)" },
@@ -32,7 +33,12 @@ ColumnLayout {
         pluginApi.pluginSettings.defaultMode = root.editDefaultMode;
         pluginApi.pluginSettings.compactBar = root.editCompactBar;
         pluginApi.pluginSettings.hideWhenOff = root.editHideWhenOff;
+        pluginApi.pluginSettings.cliCommand = root.editCliCommand;
         pluginApi.saveSettings();
+    }
+
+    function saveSettings() {
+        root.save();
     }
 
     spacing: Style.marginM
@@ -71,6 +77,18 @@ ColumnLayout {
         checked: root.editHideWhenOff
         onToggled: checked => {
             root.editHideWhenOff = checked;
+            root.save();
+        }
+    }
+
+    NTextInput {
+        Layout.fillWidth: true
+        label: "CLI Command / Path"
+        description: "Command or path to vanish-cam executable (searched in PATH and ~/.local/bin)."
+        placeholderText: "vanish-cam"
+        text: root.editCliCommand
+        onTextChanged: {
+            root.editCliCommand = text;
             root.save();
         }
     }
