@@ -36,7 +36,12 @@ Install the DKMS module and headers for your kernels:
 sudo pacman -S v4l2loopback-dkms linux-cachyos-headers linux-cachyos-lts-headers
 ```
 
-The launcher script loads `v4l2loopback` with `exclusive_caps=1` (`card_label="VanishCam"`) so Chromium-based browsers (Google Meet, Discord, Zoom) enumerate `/dev/video2` (`VanishCam`) as a capture device.
+To auto-load `v4l2loopback` on every boot with `exclusive_caps=1` (`card_label="VanishCam"`) so Chromium-based browsers (Google Meet, Discord, Zoom) enumerate `/dev/video2` (`VanishCam`) without needing `sudo` at launch:
+
+```bash
+echo v4l2loopback | sudo tee /etc/modules-load.d/v4l2loopback.conf
+echo 'options v4l2loopback exclusive_caps=1 card_label="VanishCam"' | sudo tee /etc/modprobe.d/v4l2loopback.conf
+```
 
 ### 3. Running for a Meeting
 Close any browser tab or app holding `/dev/video0`, then start the launcher:
