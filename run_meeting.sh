@@ -76,5 +76,5 @@ fi
 
 echo "[run_meeting] Physical camera: $CAMERA_DEV -> Virtual camera: $DEVICE (pick 'VanishCam' in your meeting app)"
 # The pip OpenCV build only ships the Qt xcb plugin, so route this app through XWayland.
-QT_QPA_PLATFORM=xcb exec "$PYTHON" "$REPO/vanish_cam.py" \
+PYTHONUNBUFFERED=1 QT_QPA_PLATFORM=xcb exec "$PYTHON" "$REPO/vanish_cam.py" \
     --virtual-camera --virtual-backend v4l2loopback --virtual-device "$DEVICE" "${ARGS[@]}"

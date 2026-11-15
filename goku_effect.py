@@ -14,7 +14,7 @@ import numpy as np
 HOLD_SECONDS = 1.0
 TELEPORT_SECONDS = 0.25
 SNAP_SECONDS = 0.045
-TRACKING_GRACE_SECONDS = 0.25
+TRACKING_GRACE_SECONDS = 0.40
 
 
 def _finger_straight(points: np.ndarray, joints: tuple[int, int, int, int]) -> bool:
@@ -144,7 +144,7 @@ class GokuPoseRecognizer:
             return True
         if self.fallback_hand_detector is None or timestamp_ms < self._next_retry_ms:
             return False
-        self._next_retry_ms = timestamp_ms + 300
+        self._next_retry_ms = timestamp_ms + 150
         x, y, width, height = max(self._faces, key=lambda face: face[2] * face[3])
         left = max(0, round(x - width * 0.55))
         top = max(0, round(y - height * 0.40))

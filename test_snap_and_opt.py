@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from local_app import hud, ipc, virtual_bg
+from local_app import goku_effect, hud, ipc, virtual_bg
 from local_app import vanish_cam as app
 from local_app.itachi_effect import ItachiPoseRecognizer
 from local_app.snap_effect import P1_DISSOLVE_END, P2_VORTEX_END, P3_ASSEMBLE_END, P4_HOLD_END, SNAP_SECONDS, SnapRebuildEffect, SnapVoidEffect
@@ -203,6 +203,105 @@ class VirtualBackgroundTests(unittest.TestCase):
         cyber_expected, _ = virtual_bg.load_virtual_background("cyber-grid", 80, 60)
         self.assertLessEqual(int(np.max(np.abs(sent[0].astype(int) - studio_expected.astype(int)))), 2)
         self.assertLessEqual(int(np.max(np.abs(sent[-1].astype(int) - cyber_expected.astype(int)))), 2)
+
+
+class GokuReappearTests(unittest.TestCase):
+    def test_fallback_cooldown_fits_within_tracking_grace(self):
+        gate = goku_effect.GokuGestureGate(hold_seconds=1.0)
+        self.assertLess(0.20, goku_effect.TRACKING_GRACE_SECONDS)
+        # Alternating fallback-hit (every 300ms) and main-detector-miss must keep the hold alive.
+        triggered = False
+        for step in range(9):
+            now = step * 0.15
+            pose = (step % 2 == 0)
+            if gate.update(pose, now):
+                triggered = True
+        self.assertTrue(triggered)
+
+    def test_goku_vanished_reappears_via_gesture_under_real_capture_idle(self):
+        live_frame = np.full((60, 80, 3), 210, dtype=np.uint8)
+        person = np.zeros((60, 80), dtype=np.float32)
+        person[15:50, 25:55] = 1.0
+
+        capture = Mock(spec=app.cv2.VideoCapture)
+        capture.isOpened.return_value = True
+        capture.grab.return_value = True
+        capture.retrieve.side_effect = lambda: (True, live_frame.copy())
+        capture.read.side_effect = lambda: (True, live_frame.copy())
+        segmenter = SimpleNamespace(close=lambda: None)
+        recognizer = SimpleNamespace(
+            last_face_count=1,
+            last_hand_count=1,
+            recognize_pose=Mock(side_effect=lambda *args, **kwargs: state_box["pose"]),
+            close=lambda: None,
+        )
+        fake_virtual = Mock()
+        fake_virtual.width = 80
+        fake_virtual.height = 60
+        state_box = {"pose": False}
+        phases_seen = []
+        clock = [0.0]
+
+        def fake_perf():
+            return clock[0]
+
+        real_sleep = app.time.sleep
+
+        def fake_sleep(dt):
+            clock[0] += dt
+            real_sleep(0.002)
+
+        def fake_virtual_sleep():
+            clock[0] += 0.035
+            real_sleep(0.002)
+
+        fake_virtual.sleep_until_next_frame = fake_virtual_sleep
+
+        def fake_write_ipc(running, mode="snap", state=None, *args, **kwargs):
+            if running and state is not None:
+                phases_seen.append(state.phase)
+
+        cmd_counter = [0]
+
+        def poll_cmds():
+            cmd_counter[0] += 1
+            if cmd_counter[0] == 1:
+                return ["vanish"]
+            if "ready" in phases_seen[1:] and len([p for p in phases_seen if p == "ready"]) > 3:
+                return ["quit"]
+            if len(phases_seen) > 120:
+                return ["quit"]
+            if "vanished" in phases_seen:
+                state_box["pose"] = True
+            return []
+
+        args = argparse.Namespace(
+            camera=0, width=80, height=60, fps=30, no_mirror=True, no_virtual_camera=False,
+            virtual_camera=True, virtual_backend="v4l2loopback", virtual_device="/dev/video0",
+            async_gestures=True, no_preview=True, reuse_bg=False, goku_delay=0.35,
+            fullscreen=False, bg_delay=7.0, preview_hud=True, snap_text="BRB",
+            bg_image="studio-dark", gesture_debug=False,
+        )
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app, "download_models"))
+            stack.enter_context(patch.object(app, "open_camera", return_value=capture))
+            stack.enter_context(patch.object(app, "create_tasks", return_value=(segmenter, recognizer)))
+            stack.enter_context(patch.object(app, "open_virtual_camera", return_value=fake_virtual))
+            stack.enter_context(patch.object(app, "VanishSound", return_value=Mock()))
+            stack.enter_context(patch.object(app, "person_mask", return_value=person))
+            stack.enter_context(patch.object(app, "write_ipc_state", side_effect=fake_write_ipc))
+            stack.enter_context(patch.object(app, "poll_ipc_commands", side_effect=poll_cmds))
+            stack.enter_context(patch.object(app.time, "perf_counter", side_effect=fake_perf))
+            stack.enter_context(patch.object(app.time, "sleep", side_effect=fake_sleep))
+            for name in ("namedWindow", "resizeWindow", "destroyAllWindows", "imshow"):
+                stack.enter_context(patch.object(app.cv2, name))
+            with ExitStack() as res:
+                self.assertEqual(app.run_camera(args, res, "goku"), 0)
+
+        self.assertIn("vanished", phases_seen)
+        self.assertIn("goku_appearing", phases_seen)
+        vanished_idx = phases_seen.index("vanished")
+        self.assertIn("ready", phases_seen[vanished_idx + 1:])
 
 
 if __name__ == "__main__":
