@@ -26,6 +26,29 @@ Item {
     property bool ghostEcho: false
     property bool blurBg: false
     property string snapMessage: savedSnapMessage ? savedSnapMessage : "BRB..."
+    property var modesModel: [
+        { id: "snap", label: "Snap Void", shortLabel: "SNAP", vanishHint: "Pinch & snap", reappearHint: "Peace sign / R", icon: "sparkles" },
+        { id: "naruto", label: "Naruto Log", shortLabel: "NARU", vanishHint: "Join both hands", reappearHint: "Button / R", icon: "flame" },
+        { id: "normal", label: "Dissolve", shortLabel: "NORM", vanishHint: "Peace sign", reappearHint: "Button / R", icon: "wand" },
+        { id: "particles", label: "Particles", shortLabel: "PART", vanishHint: "Peace sign", reappearHint: "Button / R", icon: "atom" },
+        { id: "itachi", label: "Itachi Crows", shortLabel: "ITAC", vanishHint: "Hands at chest", reappearHint: "Hands at chest / R", icon: "feather" },
+        { id: "goku", label: "Goku Teleport", shortLabel: "GOKU", vanishHint: "Forehead 1s", reappearHint: "Forehead 1s / R", icon: "bolt" }
+    ]
+
+    FileView {
+        id: modesFileView
+        path: Qt.resolvedUrl("modes.json").toString().replace("file://", "")
+        watchChanges: false
+        printErrors: false
+        onLoaded: {
+            try {
+                const parsed = JSON.parse(text().trim());
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    root.modesModel = parsed;
+                }
+            } catch (e) {}
+        }
+    }
 
     FileView {
         id: stateFileView
@@ -74,7 +97,7 @@ Item {
 
     Timer {
         id: pollTimer
-        interval: root.camRunning ? 650 : 2500
+        interval: root.camRunning ? 850 : 3500
         repeat: true
         running: true
         onTriggered: stateFileView.reload()
@@ -82,7 +105,7 @@ Item {
 
     Timer {
         id: burstPollTimer
-        interval: 180
+        interval: 150
         repeat: false
         onTriggered: stateFileView.reload()
     }
@@ -94,7 +117,10 @@ Item {
         onTriggered: root.startingUp = false
     }
 
-    Component.onCompleted: stateFileView.reload()
+    Component.onCompleted: {
+        modesFileView.reload();
+        stateFileView.reload();
+    }
 
     function runCli(args) {
         const fullArgs = ["sh", "-c", "export PATH=\"$HOME/.local/bin:$PATH\"; exec \"$0\" \"$@\"", root.cliCommand].concat(args);

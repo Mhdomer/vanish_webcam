@@ -91,6 +91,18 @@ case "$cmd" in
         [[ $# -ge 1 ]] || { echo "Usage: vanish-cam snap-text \"MESSAGE\"" >&2; exit 1; }
         send_cmd "snap-text:$*"
         ;;
+    modes)
+        MODES_FILE="$REPO/noctalia-plugin/modes.json"
+        if [[ "${1:-}" == "--json" ]]; then
+            cat "$MODES_FILE"
+        else
+            "$REPO/.venv/bin/python" - "$MODES_FILE" <<'PY'
+import json, sys
+for m in json.load(open(sys.argv[1])):
+    print(f"{m['id']:<10} {m['label']:<15} vanish={m['vanishHint']:<16} reappear={m['reappearHint']}")
+PY
+        fi
+        ;;
     status)
         if ! is_running; then
             if [[ "${1:-}" == "--json" ]]; then
@@ -129,6 +141,7 @@ Commands:
   bg [args]             Start VanishCam in background with --reuse-bg
   stop                  Stop running VanishCam instance
   toggle [args]         Toggle VanishCam on/off
+  modes [--json]        List modes, gestures, and metadata
   mode <name>           Switch mode live without restarting camera (snap, naruto, normal, particles, itachi, goku)
   action                Vanish if ready, or reappear if vanished
   vanish                Trigger vanish effect now

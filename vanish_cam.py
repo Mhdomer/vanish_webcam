@@ -6,8 +6,6 @@ import argparse
 import json
 import os
 import platform
-import shutil
-import subprocess
 import sys
 import time
 import urllib.error
@@ -30,7 +28,13 @@ from mediapipe.tasks.python import vision
 
 try:
     from .goku_settings import choose_goku_delay
-    from .itachi_effect import CROW_SHEET_PATH, SHARINGAN_PATH, EFFECT_SECONDS as ITACHI_SECONDS, ItachiCrowEffect, ItachiGestureGate, ItachiPoseRecognizer, load_crow_sprites, load_sharingan_art
+    from .hud import _hud_menu_buttons, draw_preview_banner, draw_preview_hud
+    from .ipc import CMD_FILE, STATE_FILE, notify_desktop, poll_ipc_commands, write_ipc_state
+    from .itachi_effect import (
+        CROW_SHEET_PATH, SHARINGAN_PATH, EFFECT_SECONDS as ITACHI_SECONDS,
+        ItachiCrowEffect, ItachiGestureGate, ItachiPoseRecognizer,
+        hands_touch_at_chest, load_crow_sprites, load_sharingan_art,
+    )
     from .license_client import LicenseError, activate_license, load_config, show_license_error
     from .goku_effect import (
         GokuGestureGate, GokuPoseRecognizer, GokuTeleport, HOLD_SECONDS,
@@ -48,7 +52,13 @@ try:
     from .vanish_sound import SOUND_PATH, TELEPORT_SOUND_PATH, VanishSound
 except ImportError:
     from goku_settings import choose_goku_delay
-    from itachi_effect import CROW_SHEET_PATH, SHARINGAN_PATH, EFFECT_SECONDS as ITACHI_SECONDS, ItachiCrowEffect, ItachiGestureGate, ItachiPoseRecognizer, load_crow_sprites, load_sharingan_art
+    from hud import _hud_menu_buttons, draw_preview_banner, draw_preview_hud
+    from ipc import CMD_FILE, STATE_FILE, notify_desktop, poll_ipc_commands, write_ipc_state
+    from itachi_effect import (
+        CROW_SHEET_PATH, SHARINGAN_PATH, EFFECT_SECONDS as ITACHI_SECONDS,
+        ItachiCrowEffect, ItachiGestureGate, ItachiPoseRecognizer,
+        hands_touch_at_chest, load_crow_sprites, load_sharingan_art,
+    )
     from license_client import LicenseError, activate_license, load_config, show_license_error
     from goku_effect import (
         GokuGestureGate, GokuPoseRecognizer, GokuTeleport, HOLD_SECONDS,
@@ -69,8 +79,6 @@ except ImportError:
 APP_DIR = Path(__file__).resolve().parent
 MODEL_DIR = APP_DIR / "models"
 SAVED_BG_PATH = APP_DIR / "assets" / "last_bg.png"
-STATE_FILE = Path("/tmp/vanish_cam.state.json")
-CMD_FILE = Path("/tmp/vanish_cam.cmd")
 REAPPEAR_SECONDS = 0.85
 WINDOW_NAME = "Webcam - Preview"
 
@@ -670,22 +678,6 @@ def to_gesture_mp_image(frame: np.ndarray, max_width: int = 640) -> mp.Image:
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
 
-def notify_desktop(summary: str, body: str) -> None:
-    """Send a non-blocking desktop notification on Linux when running headless."""
-    notify_bin = shutil.which("notify-send")
-    if not notify_bin:
-        return
-    try:
-        subprocess.Popen(
-            [notify_bin, "-a", "VanishCam", "-t", "2800", summary, body],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError:
-        pass
-
-
 def person_mask(
     segmenter: vision.ImageSegmenter,
     image: mp.Image,
@@ -703,6 +695,8 @@ def person_mask(
 
 
 def alpha_composite(person: np.ndarray, background: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+    if hasattr(cv2, "blendLinear"):
+        return cv2.blendLinear(person, background, alpha, 1.0 - alpha)
     alpha_3 = alpha[:, :, None]
     return (
         person.astype(np.float32) * alpha_3
@@ -990,26 +984,6 @@ def start_naruto_on_join(state: AppState, joined: bool, now: float) -> bool:
     return False
 
 
-def draw_preview_banner(
-    frame: np.ndarray,
-    headline: str,
-    subtitle: str = "",
-    accent: tuple[int, int, int] = (0, 200, 255),
-) -> np.ndarray:
-    """Draw a preview-only status banner without touching the virtual camera frame."""
-    out = frame.copy()
-    h, w = out.shape[:2]
-    bar_h = 84 if subtitle else 54
-    overlay = out[:bar_h].copy()
-    cv2.rectangle(overlay, (0, 0), (w, bar_h), (20, 22, 26), -1)
-    cv2.addWeighted(overlay, 0.72, out[:bar_h], 0.28, 0, out[:bar_h])
-    cv2.rectangle(out, (0, bar_h - 3), (w, bar_h), accent, -1)
-    cv2.putText(out, headline, (20, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.85, accent, 2, cv2.LINE_AA)
-    if subtitle:
-        cv2.putText(out, subtitle, (20, 66), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 230, 237), 1, cv2.LINE_AA)
-    return out
-
-
 def load_saved_background(width: int, height: int) -> np.ndarray | None:
     if not SAVED_BG_PATH.is_file():
         return None
@@ -1033,152 +1007,6 @@ def save_background(background: np.ndarray) -> None:
         cv2.imwrite(str(SAVED_BG_PATH), background)
     except OSError:
         pass
-
-
-def write_ipc_state(
-    running: bool,
-    mode: str = "",
-    state: AppState | None = None,
-    snap_message: str = "",
-) -> None:
-    """Write live JSON state to /tmp/vanish_cam.state.json for CLI and Noctalia/Niri plugins."""
-    payload = {
-        "running": running,
-        "pid": os.getpid() if running else None,
-        "mode": mode if running else "",
-        "phase": state.phase if (running and state is not None) else "off",
-        "gestures_paused": bool(state.gestures_paused) if (running and state is not None) else False,
-        "preview_visible": bool(state.preview_visible) if (running and state is not None) else False,
-        "ghost_echo": bool(state.ghost_echo) if (running and state is not None) else False,
-        "blur_bg": bool(state.blur_bg) if (running and state is not None) else False,
-        "snap_message": snap_message if (running and mode == "snap") else "",
-        "updated_at": round(time.time(), 2),
-    }
-    try:
-        tmp = STATE_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload), encoding="utf-8")
-        os.replace(tmp, STATE_FILE)
-    except OSError:
-        pass
-
-
-def poll_ipc_commands() -> list[str]:
-    """Read and clear queued remote commands from /tmp/vanish_cam.cmd."""
-    if not CMD_FILE.is_file():
-        return []
-    try:
-        raw = CMD_FILE.read_text(encoding="utf-8")
-        CMD_FILE.unlink(missing_ok=True)
-        return [line.strip() for line in raw.splitlines() if line.strip()]
-    except OSError:
-        return []
-
-
-def _hud_menu_buttons(w: int, h: int, mode: str, state: AppState) -> list[tuple[str, str, tuple[int, int, int, int]]]:
-    is_away = state.phase in ("vanished", "frozen")
-    action_label = "Reappear Now (R)" if is_away else "Vanish Now (V)"
-    action_cmd = "reappear" if is_away else "vanish"
-    freeze_label = "Unfreeze Camera (Z)" if state.phase == "frozen" else "Freeze Frame (Z)"
-    pause_label = "Resume Gestures (G)" if state.gestures_paused else "Pause Gestures (G)"
-    blur_label = f"Blur Room: {'ON' if state.blur_bg else 'OFF'} (W)"
-    echo_label = f"Ghost Echo: {'ON' if state.ghost_echo else 'OFF'} (E)"
-    items = [
-        (action_cmd, action_label),
-        ("freeze", freeze_label),
-        ("blur", blur_label),
-        ("pause", pause_label),
-        ("echo", echo_label),
-        ("recapture", "Recapture Room (SPACE)"),
-        ("load-bg", "Load Saved Room (B)"),
-    ]
-    if mode == "snap":
-        items.append(("next-text", "Next Snap Excuse (T)"))
-        edit_label = f"Type: {state.edit_buffer}_ [ENTER]" if state.editing_text else "Edit Custom Excuse (Click)"
-        items.append(("edit-text", edit_label))
-    items.append(("preview", "Hide Preview Window (P)"))
-    items.append(("help", "Close Menu (H)"))
-
-    box_w = min(w - 40, 360)
-    row_h, gap = 29, 5
-    mode_row_h = 28
-    box_h = 82 + len(items) * (row_h + gap)
-    bx1 = (w - box_w) // 2
-    by1 = max(10, (h - box_h) // 2)
-    buttons = []
-    modes = ("snap", "naruto", "normal", "particles", "itachi", "goku")
-    inner_w = box_w - 32
-    cell_w = (inner_w - 5 * 4) // 6
-    my1 = by1 + 36
-    for idx, m in enumerate(modes):
-        mx1 = bx1 + 16 + idx * (cell_w + 4)
-        mx2 = mx1 + cell_w if idx < 5 else bx1 + box_w - 16
-        buttons.append((f"mode:{m}", m[:4].upper(), (mx1, my1, mx2, my1 + mode_row_h)))
-    for idx, (cmd, label) in enumerate(items):
-        y1 = my1 + mode_row_h + 8 + idx * (row_h + gap)
-        buttons.append((cmd, label, (bx1 + 16, y1, bx1 + box_w - 16, y1 + row_h)))
-    return buttons
-
-
-def draw_preview_hud(
-    frame: np.ndarray,
-    mode: str,
-    state: AppState,
-    snap_message: str = "",
-) -> np.ndarray:
-    """Draw a subtle bottom status pill and clickable control menu on preview only."""
-    out = frame.copy() if frame is not None else frame
-    h, w = out.shape[:2]
-    gesture_state = "PAUSED" if state.gestures_paused else "ON"
-    mode_tag = f"SNAP: {snap_message}" if mode == "snap" and snap_message else mode.upper()
-    if state.phase == "frozen":
-        mode_tag = f"{mode_tag} [FROZEN]"
-    elif state.blur_bg and state.phase == "ready":
-        mode_tag = f"{mode_tag} [BLUR]"
-    elif state.ghost_echo:
-        mode_tag = f"{mode_tag} [ECHO]"
-    pill = f"{mode_tag}  |  GESTURES {gesture_state}  |  [H] MENU"
-    (tw, th), _ = cv2.getTextSize(pill, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-    pad_x, pad_y = 12, 8
-    x1, y2 = 14, h - 14
-    x2, y1 = min(w - 14, x1 + tw + pad_x * 2), max(14, y2 - th - pad_y * 2)
-    roi = out[y1:y2, x1:x2]
-    dark = np.full_like(roi, (20, 22, 26))
-    cv2.addWeighted(dark, 0.72, roi, 0.28, 0, roi)
-    cv2.putText(out, pill, (x1 + pad_x, y2 - pad_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (210, 222, 228), 1, cv2.LINE_AA)
-
-    if state.show_help:
-        buttons = _hud_menu_buttons(w, h, mode, state)
-        bx1 = buttons[0][2][0] - 16
-        by1 = buttons[0][2][1] - 36
-        bx2 = buttons[-1][2][2] + 16
-        by2 = min(h - 10, buttons[-1][2][3] + 12)
-        panel = out[by1:by2, bx1:bx2]
-        bg = np.full_like(panel, (20, 22, 26))
-        cv2.addWeighted(bg, 0.86, panel, 0.14, 0, panel)
-        cv2.rectangle(out, (bx1, by1), (bx2, by2), (111, 142, 153), 1)
-        cv2.putText(out, "LOCAL CONTROL MENU (Preview Only)", (bx1 + 18, by1 + 24),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 215, 255), 1, cv2.LINE_AA)
-        for cmd, label, (rx1, ry1, rx2, ry2) in buttons:
-            if cmd.startswith("mode:"):
-                is_active = cmd.split(":", 1)[1] == mode
-                fill = (0, 140, 180) if is_active else (36, 40, 46)
-                cv2.rectangle(out, (rx1, ry1), (rx2, ry2), fill, -1)
-                cv2.rectangle(out, (rx1, ry1), (rx2, ry2), (0, 215, 255) if is_active else (80, 95, 105), 1)
-                cv2.putText(out, label, (rx1 + 6, ry1 + 19),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 255, 255) if is_active else (190, 200, 208), 1, cv2.LINE_AA)
-            else:
-                if cmd in ("vanish", "reappear"):
-                    fill = (52, 92, 76)
-                elif cmd == "edit-text" and state.editing_text:
-                    fill = (95, 72, 30)
-                else:
-                    fill = (42, 47, 54)
-                cv2.rectangle(out, (rx1, ry1), (rx2, ry2), fill, -1)
-                border_col = (0, 215, 255) if (cmd == "edit-text" and state.editing_text) else (95, 122, 132)
-                cv2.rectangle(out, (rx1, ry1), (rx2, ry2), border_col, 1)
-                cv2.putText(out, label, (rx1 + 12, ry1 + 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.43, (235, 240, 244), 1, cv2.LINE_AA)
-    return out
 
 
 def set_fullscreen(enabled: bool) -> None:
@@ -1381,11 +1209,14 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     calibration_remaining = None
     bg_ready_until = 0.0
     last_gesture_report = 0.0
-    async_gestures = bool(getattr(args, "async_gestures", False)) and mode not in ("goku", "itachi", "snap")
+    async_gestures = bool(getattr(args, "async_gestures", False))
     gesture_executor = ThreadPoolExecutor(max_workers=1) if async_gestures else None
     if gesture_executor is not None:
         resources.callback(gesture_executor.shutdown, wait=True)
     gesture_future: Future | None = None
+    future_mode = ""
+    future_mp_image: mp.Image | None = None
+    future_dims: tuple[int, int] = (args.width, args.height)
     started = time.perf_counter()
 
     def toggle_preview_window():
@@ -1413,6 +1244,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     def switch_mode(new_mode: str):
         nonlocal mode, recognizer, log_sprite, vanish_sound, chime_sound
         nonlocal itachi_gate, goku_gate, goku_countdown_remaining, gesture_executor, gesture_future
+        nonlocal future_mode, future_mp_image
         nonlocal particle_effect, itachi_effect, goku_effect, snap_effect, snap_rebuild
         nonlocal log_anchor, vanished_frame, snap_primed, last_ipc_signature
         if new_mode == mode or new_mode not in ALL_MODES:
@@ -1424,6 +1256,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             except Exception:
                 pass
             gesture_future = None
+            future_mode = ""
+            future_mp_image = None
         new_rec = create_recognizer(new_mode)
         active_recognizer[0].close()
         recognizer = new_rec
@@ -1442,7 +1276,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
         itachi_gate = ItachiGestureGate() if new_mode == "itachi" else None
         goku_gate = GokuGestureGate(hold_seconds=goku_delay) if new_mode == "goku" else None
         goku_countdown_remaining = None
-        if bool(getattr(args, "async_gestures", False)) and new_mode not in ("goku", "itachi", "snap") and gesture_executor is None:
+        if bool(getattr(args, "async_gestures", False)) and gesture_executor is None:
             gesture_executor = ThreadPoolExecutor(max_workers=1)
             resources.callback(gesture_executor.shutdown, wait=True)
         particle_effect = None
@@ -1487,20 +1321,33 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             return cur_frame
         return live if args.no_mirror else cv2.flip(live, 1)
 
+    VANISHED_GESTURE_INTERVALS = {"snap": 0.22, "goku": 0.10, "itachi": 0.09}
+    last_frame_now = started
+
     try:
         while True:
             if license_session is not None:
                 license_session.ensure_valid()
+            vanished_gesture_due = (
+                is_real_capture
+                and state.phase == "vanished"
+                and vanished_frame is not None
+                and not state.ghost_echo
+                and not state.gestures_paused
+                and gesture_future is None
+                and mode in VANISHED_GESTURE_INTERVALS
+                and (last_frame_now - state.last_gesture_check >= VANISHED_GESTURE_INTERVALS[mode])
+            )
             static_idle = (
                 is_real_capture
                 and background is not None
+                and not vanished_gesture_due
                 and (
                     (state.phase == "frozen" and frozen_frame is not None)
                     or (
                         state.phase == "vanished"
                         and vanished_frame is not None
                         and not state.ghost_echo
-                        and (state.gestures_paused or mode in ("normal", "naruto", "particles"))
                     )
                 )
             )
@@ -1523,7 +1370,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 or (
                     state.phase == "vanished"
                     and vanished_frame is not None
-                    and (state.gestures_paused or mode in ("normal", "naruto", "particles"))
+                    and not vanished_gesture_due
+                    and (state.gestures_paused or mode in ("normal", "naruto", "particles") or mode in VANISHED_GESTURE_INTERVALS)
                 )
             )
             if not args.no_mirror and not skip_flip:
@@ -1547,6 +1395,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             if mode == "normal" and (dissolve_field is None or dissolve_field.shape != (height, width)):
                 dissolve_field, sparkle_noise = make_dissolve_fields(height, width)
             now = time.perf_counter()
+            last_frame_now = now
 
             elapsed_ms = int((now - started) * 1000)
             mp_image = None
@@ -1557,79 +1406,144 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 if len(echo_buffer) > 25:
                     echo_buffer.pop(0)
 
-            if (mode == "itachi" and background is not None
-                    and not state.gestures_paused
-                    and state.phase in ("ready", "vanished")
-                    and now - state.last_gesture_check >= 0.09):
-                state.last_gesture_check = now
-                mp_image = to_gesture_mp_image(camera_frame)
-                mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
-                last_mask, last_mask_at = mask, now
-                touching = recognizer.recognize_pose(mp_image, elapsed_ms, mask)
-                if args.gesture_debug and now - last_gesture_report >= 1.0:
-                    print(f"[Itachi] hands={recognizer.last_hand_count}, chest={touching}")
-                    last_gesture_report = now
-                if itachi_gate.update(touching, now):
-                    try:
-                        itachi_effect = ItachiCrowEffect(camera_frame, mask)
-                    except ValueError:
-                        itachi_gate.reset()
-                    else:
-                        appearing = state.phase == "vanished"
-                        state.phase = "itachi_appearing" if appearing else "itachi_disappearing"
-                        state.vanish_started = now
-                        vanished_frame = None
-                        print("[Itachi] Crows reforming." if appearing
-                              else "[Itachi] Dispersing into crows.")
+            def _lazy_itachi_mask() -> np.ndarray:
+                nonlocal last_mask, last_mask_at, mp_image
+                if last_mask is not None and (now - last_mask_at) < 0.12:
+                    return last_mask
+                src_mp = mp_image if mp_image is not None else to_gesture_mp_image(ensure_live_frame(camera_frame))
+                computed = person_mask(segmenter, src_mp, elapsed_ms, width, height)
+                last_mask, last_mask_at = computed, now
+                return computed
 
-            if (mode == "goku" and background is not None
-                    and not state.gestures_paused
-                    and state.phase in ("ready", "vanished")
-                    and now - state.last_gesture_check >= 0.10):
-                state.last_gesture_check = now
-                mp_image = to_gesture_mp_image(camera_frame)
-                pose = recognizer.recognize_pose(mp_image, elapsed_ms)
-                if args.gesture_debug and now - last_gesture_report >= 1.0:
-                    held = 0.0 if goku_gate.hold_started is None else now - goku_gate.hold_started
-                    print(f"[Goku] faces={recognizer.last_face_count}, "
-                          f"hands={recognizer.last_hand_count}, pose={pose}, "
-                          f"held={held:.2f}/{goku_gate.hold_seconds:g}s")
-                    last_gesture_report = now
-                if goku_gate.update(pose, now):
-                    action = "Reappearing" if state.phase == "vanished" else "Vanishing"
-                    print(f"[Goku] {action}!")
-                    goku_countdown_remaining = None
-                    mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
-                    goku_effect = GokuTeleport(camera_frame, background, mask)
-                    appearing = state.phase == "vanished"
-                    state.phase = "goku_appearing" if appearing else "goku_vanishing"
-                    state.vanish_started = time.perf_counter()
-                    vanish_sound.play()
-                elif pose and goku_gate.armed and goku_gate.hold_started is not None:
-                    left = goku_gate.hold_seconds - (now - goku_gate.hold_started)
-                    remaining = (max(.1,float(np.ceil(left*10)/10)) if goku_gate.hold_seconds < 1
-                                 else max(1,int(np.ceil(left))))
-                    if remaining != goku_countdown_remaining:
+            if mode == "itachi" and background is not None and not state.gestures_paused and state.phase in ("ready", "vanished"):
+                itachi_candidates = None
+                touching = None
+                if gesture_future is not None and future_mode == "itachi" and gesture_future.done():
+                    itachi_candidates = gesture_future.result()
+                    mp_image = future_mp_image
+                    gesture_future = None
+                    future_mp_image = None
+                    if itachi_candidates:
+                        mask = _lazy_itachi_mask()
+                        touching = any(hands_touch_at_chest(c, mask) for c in itachi_candidates)
+                    else:
+                        touching = False
+                elif gesture_future is None and now - state.last_gesture_check >= 0.09:
+                    state.last_gesture_check = now
+                    mp_image = to_gesture_mp_image(camera_frame)
+                    if gesture_executor is not None and hasattr(recognizer, "detect_hands_candidates"):
+                        future_mode = "itachi"
+                        future_mp_image = mp_image
+                        gesture_future = gesture_executor.submit(recognizer.detect_hands_candidates, mp_image, elapsed_ms)
+                    else:
+                        touching = recognizer.recognize_pose(mp_image, elapsed_ms, _lazy_itachi_mask)
+
+                if touching is not None:
+                    if args.gesture_debug and now - last_gesture_report >= 1.0:
+                        print(f"[Itachi] hands={recognizer.last_hand_count}, chest={touching}")
+                        last_gesture_report = now
+                    if itachi_gate.update(touching, now):
+                        trigger_frame = ensure_live_frame(camera_frame)
+                        mask = _lazy_itachi_mask()
+                        try:
+                            itachi_effect = ItachiCrowEffect(trigger_frame, mask)
+                        except ValueError:
+                            itachi_gate.reset()
+                        else:
+                            appearing = state.phase == "vanished"
+                            state.phase = "itachi_appearing" if appearing else "itachi_disappearing"
+                            state.vanish_started = now
+                            vanished_frame = None
+                            print("[Itachi] Crows reforming." if appearing
+                                  else "[Itachi] Dispersing into crows.")
+
+            if mode == "goku" and background is not None and not state.gestures_paused and state.phase in ("ready", "vanished"):
+                pose = None
+                if gesture_future is not None and future_mode == "goku" and gesture_future.done():
+                    pose = gesture_future.result()
+                    mp_image = future_mp_image
+                    gesture_future = None
+                    future_mp_image = None
+                elif gesture_future is None and now - state.last_gesture_check >= 0.10:
+                    state.last_gesture_check = now
+                    mp_image = to_gesture_mp_image(camera_frame)
+                    if gesture_executor is not None:
+                        future_mode = "goku"
+                        future_mp_image = mp_image
+                        gesture_future = gesture_executor.submit(recognizer.recognize_pose, mp_image, elapsed_ms)
+                    else:
+                        pose = recognizer.recognize_pose(mp_image, elapsed_ms)
+
+                if pose is not None:
+                    if args.gesture_debug and now - last_gesture_report >= 1.0:
+                        held = 0.0 if goku_gate.hold_started is None else now - goku_gate.hold_started
+                        print(f"[Goku] faces={recognizer.last_face_count}, "
+                              f"hands={recognizer.last_hand_count}, pose={pose}, "
+                              f"held={held:.2f}/{goku_gate.hold_seconds:g}s")
+                        last_gesture_report = now
+                    if goku_gate.update(pose, now):
                         action = "Reappearing" if state.phase == "vanished" else "Vanishing"
-                        print(f"[Goku] {action} in {remaining:g}...")
-                        goku_countdown_remaining = remaining
-                elif goku_gate.hold_started is None:
-                    goku_countdown_remaining = None
+                        print(f"[Goku] {action}!")
+                        goku_countdown_remaining = None
+                        trigger_frame = ensure_live_frame(camera_frame)
+                        mask_mp = mp_image if mp_image is not None else to_gesture_mp_image(trigger_frame)
+                        mask = person_mask(segmenter, mask_mp, elapsed_ms, width, height)
+                        goku_effect = GokuTeleport(trigger_frame, background, mask)
+                        appearing = state.phase == "vanished"
+                        state.phase = "goku_appearing" if appearing else "goku_vanishing"
+                        state.vanish_started = time.perf_counter()
+                        vanish_sound.play()
+                    elif pose and goku_gate.armed and goku_gate.hold_started is not None:
+                        left = goku_gate.hold_seconds - (now - goku_gate.hold_started)
+                        remaining = (max(.1,float(np.ceil(left*10)/10)) if goku_gate.hold_seconds < 1
+                                     else max(1,int(np.ceil(left))))
+                        if remaining != goku_countdown_remaining:
+                            action = "Reappearing" if state.phase == "vanished" else "Vanishing"
+                            print(f"[Goku] {action} in {remaining:g}...")
+                            goku_countdown_remaining = remaining
+                    elif goku_gate.hold_started is None:
+                        goku_countdown_remaining = None
 
             snap_interval = 0.22 if state.phase == "vanished" else 0.05
-            if (mode == "snap" and background is not None
-                    and not state.gestures_paused
-                    and state.phase in ("ready", "vanished")
-                    and now - state.last_gesture_check >= snap_interval):
-                state.last_gesture_check = now
-                mp_image = to_gesture_mp_image(camera_frame)
-                if state.phase == "ready":
-                    snapped, snap_primed, snap_pos = recognizer.detect_snap(mp_image, elapsed_ms, width, height)
+            if mode == "snap" and background is not None and not state.gestures_paused and state.phase in ("ready", "vanished"):
+                snap_ready_res = None
+                snap_peace_res = None
+                if gesture_future is not None and future_mode == f"snap:{state.phase}" and gesture_future.done():
+                    res = gesture_future.result()
+                    mp_image = future_mp_image
+                    gesture_future = None
+                    future_mp_image = None
+                    if state.phase == "ready":
+                        snap_ready_res = res
+                    else:
+                        snap_peace_res = res
+                elif gesture_future is None and now - state.last_gesture_check >= snap_interval:
+                    state.last_gesture_check = now
+                    mp_image = to_gesture_mp_image(camera_frame)
+                    if state.phase == "ready":
+                        if gesture_executor is not None:
+                            future_mode = "snap:ready"
+                            future_mp_image = mp_image
+                            gesture_future = gesture_executor.submit(recognizer.detect_snap, mp_image, elapsed_ms, width, height)
+                        else:
+                            snap_ready_res = recognizer.detect_snap(mp_image, elapsed_ms, width, height)
+                    else:
+                        if gesture_executor is not None:
+                            future_mode = "snap:vanished"
+                            future_mp_image = mp_image
+                            gesture_future = gesture_executor.submit(recognizer.detect_peace_sign, mp_image, elapsed_ms)
+                        else:
+                            snap_peace_res = recognizer.detect_peace_sign(mp_image, elapsed_ms)
+
+                if snap_ready_res is not None and state.phase == "ready":
+                    snapped, snap_primed, snap_pos = snap_ready_res
                     if snapped:
-                        mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                        trigger_frame = ensure_live_frame(camera_frame)
+                        mask_mp = mp_image if mp_image is not None else to_gesture_mp_image(trigger_frame)
+                        mask = person_mask(segmenter, mask_mp, elapsed_ms, width, height)
                         msg = snap_messages[snap_msg_idx % len(snap_messages)]
                         snap_effect = SnapVoidEffect(
-                            camera_frame, mask, snap_pos, message=msg,
+                            trigger_frame, mask, snap_pos, message=msg,
                             on_assemble=chime_sound.play if chime_sound is not None else None,
                         )
                         if vanish_sound is not None:
@@ -1637,10 +1551,12 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         state.phase = "snap_vanishing"
                         state.vanish_started = time.perf_counter()
                         vanished_frame = None
-                else:
+                elif snap_peace_res is not None and state.phase == "vanished":
                     snap_primed = False
-                    if recognizer.detect_peace_sign(mp_image, elapsed_ms):
-                        mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                    if snap_peace_res:
+                        trigger_frame = ensure_live_frame(camera_frame)
+                        mask_mp = mp_image if mp_image is not None else to_gesture_mp_image(trigger_frame)
+                        mask = person_mask(segmenter, mask_mp, elapsed_ms, width, height)
                         snap_rebuild = SnapRebuildEffect(mask, width, height)
                         if chime_sound is not None:
                             chime_sound.play()
@@ -1748,14 +1664,15 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             else:
                 mask = last_mask
                 gesture_result = None
-                if gesture_future is not None and gesture_future.done():
+                if gesture_future is not None and future_mode in ("normal", "particles", "naruto") and gesture_future.done():
                     gesture_result = gesture_future.result()
                     gesture_future = None
+                    future_mp_image = None
 
                 if (
                     state.phase == "ready"
                     and not state.gestures_paused
-                    and mode not in ("goku", "itachi")
+                    and mode in ("normal", "particles", "naruto")
                     and gesture_future is None
                     and now - state.last_gesture_check >=
                     (0.08 if mode == "naruto" else GESTURE_INTERVAL_SECONDS)
@@ -1763,6 +1680,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     state.last_gesture_check = now
                     mp_image = to_gesture_mp_image(camera_frame)
                     if gesture_executor is not None:
+                        future_mode = mode
                         fn = recognizer.recognize_joined_hands if mode == "naruto" else recognize_gesture
                         fn_args = (mp_image, elapsed_ms) if mode == "naruto" else (recognizer, mp_image, elapsed_ms)
                         gesture_future = gesture_executor.submit(fn, *fn_args)
@@ -1801,8 +1719,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     )
                     if needs_mask:
                         if mp_image is None:
-                            rgb = cv2.cvtColor(camera_frame, cv2.COLOR_BGR2RGB)
-                            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                            mp_image = to_gesture_mp_image(camera_frame)
                         mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                         last_mask = mask
                         last_mask_at = now
@@ -2163,7 +2080,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 state.fullscreen = not state.fullscreen
                 set_fullscreen(state.fullscreen)
             if static_idle:
-                time.sleep(0.045)
+                time.sleep(0.068 if not state.preview_visible else 0.035)
             elif virtual_camera is not None:
                 virtual_camera.sleep_until_next_frame()
     finally:

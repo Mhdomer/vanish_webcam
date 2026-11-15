@@ -80,13 +80,9 @@ class ItachiPoseRecognizer:
         self.last_hand_count = 0
         self.next_retry_ms = 0
 
-    def recognize_pose(self, image: mp.Image, timestamp_ms: int, mask: np.ndarray) -> bool:
-        hands = self.detector.detect_for_video(image, timestamp_ms).hand_landmarks
-        self.last_hand_count = len(hands)
-        if hands_touch_at_chest(hands, mask):
-            return True
+    def _detect_fallback_crop(self, image: mp.Image, timestamp_ms: int) -> list | None:
         if timestamp_ms < self.next_retry_ms:
-            return False
+            return None
         self.next_retry_ms = timestamp_ms + 170
         rgb = image.numpy_view()
         x1, x2 = round(image.width * 0.18), round(image.width * 0.82)
@@ -95,10 +91,37 @@ class ItachiPoseRecognizer:
                         data=np.ascontiguousarray(rgb[y1:y2, x1:x2]))
         recovered = self.fallback.detect(crop).hand_landmarks
         self.last_hand_count = max(self.last_hand_count, len(recovered))
-        mapped = [[SimpleNamespace(x=(x1 + p.x * crop.width) / image.width,
-                                   y=(y1 + p.y * crop.height) / image.height)
-                   for p in hand] for hand in recovered]
-        return hands_touch_at_chest(mapped, mask)
+        if len(recovered) != 2:
+            return None
+        return [[SimpleNamespace(x=(x1 + p.x * crop.width) / image.width,
+                                 y=(y1 + p.y * crop.height) / image.height)
+                 for p in hand] for hand in recovered]
+
+    def detect_hands_candidates(self, image: mp.Image, timestamp_ms: int) -> list:
+        """Return candidate 2-hand sets for deferred chest-mask validation."""
+        hands = self.detector.detect_for_video(image, timestamp_ms).hand_landmarks
+        self.last_hand_count = len(hands)
+        candidates = [hands] if len(hands) == 2 else []
+        recovered = self._detect_fallback_crop(image, timestamp_ms)
+        if recovered is not None:
+            candidates.append(recovered)
+        return candidates
+
+    def recognize_pose(self, image: mp.Image, timestamp_ms: int, mask) -> bool:
+        resolved_mask: np.ndarray | None = None
+
+        def get_mask() -> np.ndarray:
+            nonlocal resolved_mask
+            if resolved_mask is None:
+                resolved_mask = mask() if callable(mask) else mask
+            return resolved_mask
+
+        hands = self.detector.detect_for_video(image, timestamp_ms).hand_landmarks
+        self.last_hand_count = len(hands)
+        if len(hands) == 2 and hands_touch_at_chest(hands, get_mask()):
+            return True
+        recovered = self._detect_fallback_crop(image, timestamp_ms)
+        return recovered is not None and hands_touch_at_chest(recovered, get_mask())
 
     def close(self) -> None:
         try:

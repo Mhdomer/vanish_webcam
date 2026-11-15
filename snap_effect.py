@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import math
-import random
 import time
 from pathlib import Path
 
@@ -32,34 +31,31 @@ STONE_COLORS = (
     (30, 130, 255),
 )
 GOLD = (0, 215, 255)
+_SPARK_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+_SMALL_SPARK_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
 
-class _Particle:
-    __slots__ = ("x", "y", "vx", "vy", "color", "life", "size", "tx", "ty", "ease", "twinkle")
+class _ParticleSystem:
+    """Contiguous NumPy arrays backing Snap void and rebuild particles."""
 
-    def __init__(
-        self,
-        x: float,
-        y: float,
-        color: tuple[int, int, int],
-        vx: float = 0.0,
-        vy: float = 0.0,
-        size: int = 3,
-        target: tuple[float, float] | None = None,
-        ease: float = 0.12,
-        twinkle: float = 0.0,
-    ) -> None:
-        self.x = float(x)
-        self.y = float(y)
-        self.vx = vx
-        self.vy = vy
-        self.color = color
-        self.life = 1.0
-        self.size = size
-        self.tx = None if target is None else float(target[0])
-        self.ty = None if target is None else float(target[1])
-        self.ease = ease
-        self.twinkle = twinkle
+    __slots__ = (
+        "x", "y", "vx", "vy", "tx", "ty", "has_target",
+        "color", "life", "ease", "twinkle", "count",
+    )
+
+    def __init__(self, count: int) -> None:
+        self.count = count
+        self.x = np.zeros(count, dtype=np.float32)
+        self.y = np.zeros(count, dtype=np.float32)
+        self.vx = np.zeros(count, dtype=np.float32)
+        self.vy = np.zeros(count, dtype=np.float32)
+        self.tx = np.zeros(count, dtype=np.float32)
+        self.ty = np.zeros(count, dtype=np.float32)
+        self.has_target = np.zeros(count, dtype=bool)
+        self.color = np.zeros((count, 3), dtype=np.uint8)
+        self.life = np.ones(count, dtype=np.float32)
+        self.ease = np.full(count, 0.12, dtype=np.float32)
+        self.twinkle = np.zeros(count, dtype=np.float32)
 
 
 class SnapPoseRecognizer:
@@ -130,32 +126,45 @@ def _sample_text_targets(message: str, w: int, h: int, max_points: int):
     ys, xs = np.where(canvas > 100)
     if len(xs) == 0:
         return None, None
-    pts = np.column_stack((xs, ys)).astype(np.float64)
+    pts = np.column_stack((xs, ys)).astype(np.float32)
     if len(pts) > max_points:
         idx = np.random.choice(len(pts), max_points, replace=False)
         pts = pts[idx]
     else:
         need = min(max_points, len(pts) * 4)
         idx = np.random.choice(len(pts), need, replace=True)
-        pts = pts[idx] + np.random.uniform(-2.5, 2.5, (need, 2))
+        pts = pts[idx] + np.random.uniform(-2.5, 2.5, (need, 2)).astype(np.float32)
     bbox = (int(org[0]), int(org[1] - th), int(org[0] + tw), int(org[1] + base))
     return pts, bbox
 
 
-def _draw_glow_layer(out_frame: np.ndarray, spark_list: list[_Particle], layer: np.ndarray) -> np.ndarray:
-    if not spark_list:
+def _draw_glow_layer(
+    out_frame: np.ndarray,
+    system: _ParticleSystem,
+    layer: np.ndarray,
+    kernel: np.ndarray = _SPARK_KERNEL,
+) -> np.ndarray:
+    if system.count == 0:
         return out_frame
+    h, w = layer.shape[:2]
+    ix = np.rint(system.x).astype(np.int32)
+    iy = np.rint(system.y).astype(np.int32)
+    alive = (system.life > 0.02) & (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+    if not np.any(alive):
+        return out_frame
+
     layer[:] = 0
-    for s in spark_list:
-        a = max(0.0, min(1.0, s.life))
-        if a <= 0.0:
-            continue
-        color = (min(255, int(s.color[0] * a)), min(255, int(s.color[1] * a)), min(255, int(s.color[2] * a)))
-        if s.size > 1:
-            glow_color = (color[0] // 4, color[1] // 4, color[2] // 4)
-            cv2.circle(layer, (int(s.x), int(s.y)), s.size * 3, glow_color, -1)
-        cv2.circle(layer, (int(s.x), int(s.y)), s.size, color, -1)
-    cv2.add(out_frame, layer, dst=out_frame)
+    alpha = np.clip(system.life[alive], 0.0, 1.0)[:, None]
+    cols = np.clip(system.color[alive].astype(np.float32) * alpha, 0, 255).astype(np.uint8)
+    layer[iy[alive], ix[alive]] = cols
+
+    core = cv2.dilate(layer, kernel)
+    small_w, small_h = max(80, w // 4), max(45, h // 4)
+    glow = cv2.resize(core, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    glow = cv2.GaussianBlur(glow, (0, 0), sigmaX=2.4, sigmaY=2.4)
+    glow_up = cv2.resize(glow, (w, h), interpolation=cv2.INTER_LINEAR)
+    cv2.add(out_frame, core, dst=out_frame)
+    cv2.addWeighted(out_frame, 1.0, glow_up, 0.65, 0, dst=out_frame)
     return out_frame
 
 
@@ -177,86 +186,98 @@ class SnapVoidEffect:
         self.on_assemble = on_assemble
         self.h, self.w = frame.shape[:2]
         self._layer = np.zeros((self.h, self.w, 3), np.uint8)
+        self._rng = np.random.default_rng()
         self.shockwave_radius = 5
         self.msg_assigned = False
         self.void_bbox: tuple[int, int, int, int] | None = None
-        self.particles: list[_Particle] = []
 
         ys, xs = np.where(mask > 0.5)
-        if len(xs) > 0:
-            sample_count = min(2400, len(xs))
-            indices = np.random.choice(len(xs), size=sample_count, replace=False)
-            for idx in indices:
-                px, py = int(xs[idx]), int(ys[idx])
-                b, g, r = frame[py, px]
-                if random.random() < 0.25:
-                    color = random.choice(STONE_COLORS)
-                else:
-                    color = (
-                        min(255, int(b * 0.4 + 20)),
-                        min(255, int(g * 0.8 + 120)),
-                        min(255, int(r * 1.2 + 180)),
-                    )
-                angle = math.atan2(py - snap_pos[1], px - snap_pos[0])
-                speed = random.uniform(2.0, 7.0)
-                vx = math.cos(angle) * speed + random.uniform(1.0, 5.0)
-                vy = math.sin(angle) * speed - random.uniform(2.0, 6.0)
-                self.particles.append(
-                    _Particle(px, py, color, vx=vx, vy=vy, size=random.randint(2, 4), twinkle=random.uniform(0, math.tau))
-                )
+        if len(xs) == 0:
+            self.particles = _ParticleSystem(0)
+            return
+
+        sample_count = min(2400, len(xs))
+        indices = self._rng.choice(len(xs), size=sample_count, replace=False)
+        px = xs[indices].astype(np.float32)
+        py = ys[indices].astype(np.float32)
+
+        ps = _ParticleSystem(sample_count)
+        ps.x = px
+        ps.y = py
+
+        sampled_bgr = frame[ys[indices], xs[indices]].astype(np.float32)
+        base_colors = np.empty((sample_count, 3), dtype=np.uint8)
+        base_colors[:, 0] = np.clip(sampled_bgr[:, 0] * 0.4 + 20, 0, 255)
+        base_colors[:, 1] = np.clip(sampled_bgr[:, 1] * 0.8 + 120, 0, 255)
+        base_colors[:, 2] = np.clip(sampled_bgr[:, 2] * 1.2 + 180, 0, 255)
+
+        stone_mask = self._rng.random(sample_count) < 0.25
+        stone_count = int(np.sum(stone_mask))
+        if stone_count:
+            palette = np.asarray(STONE_COLORS, dtype=np.uint8)
+            base_colors[stone_mask] = palette[self._rng.integers(0, len(STONE_COLORS), size=stone_count)]
+        ps.color = base_colors
+
+        angles = np.arctan2(py - float(snap_pos[1]), px - float(snap_pos[0]))
+        speeds = self._rng.uniform(2.0, 7.0, size=sample_count).astype(np.float32)
+        ps.vx = (np.cos(angles) * speeds + self._rng.uniform(1.0, 5.0, size=sample_count)).astype(np.float32)
+        ps.vy = (np.sin(angles) * speeds - self._rng.uniform(2.0, 6.0, size=sample_count)).astype(np.float32)
+        ps.twinkle = self._rng.uniform(0.0, math.tau, size=sample_count).astype(np.float32)
+        self.particles = ps
 
     def _assign_message_targets(self) -> None:
         self.msg_assigned = True
         if self.on_assemble is not None:
             self.on_assemble()
-        if not self.particles:
+        if self.particles.count == 0:
             return
-        pts, self.void_bbox = _sample_text_targets(self.message, self.w, self.h, len(self.particles))
+        pts, self.void_bbox = _sample_text_targets(self.message, self.w, self.h, self.particles.count)
         if pts is None:
             return
-        order = np.random.permutation(len(self.particles))
-        for i, p_idx in enumerate(order):
-            if i >= len(pts):
-                break
-            p = self.particles[p_idx]
-            p.tx, p.ty = float(pts[i][0]), float(pts[i][1])
-            p.ease = random.uniform(0.07, 0.15)
+        assign_n = min(self.particles.count, len(pts))
+        order = self._rng.permutation(self.particles.count)[:assign_n]
+        self.particles.tx[order] = pts[:assign_n, 0]
+        self.particles.ty[order] = pts[:assign_n, 1]
+        self.particles.has_target[order] = True
+        self.particles.ease[order] = self._rng.uniform(0.07, 0.15, size=assign_n).astype(np.float32)
 
     def render(self, background: np.ndarray, age: float) -> np.ndarray:
         out_frame = background.copy()
+        ps = self.particles
         if age < P1_DISSOLVE_END:
             progress = age / P1_DISSOLVE_END
             body_alpha = float(np.clip((1.0 - progress) * 1.5, 0.0, 1.0))
-            dissolve_threshold = 0.5 + progress * 0.5
-            mask_3d = (self.mask > dissolve_threshold)[:, :, np.newaxis]
+            active_u8 = (self.mask > (0.5 + progress * 0.5)).view(np.uint8)
             faded_body = cv2.addWeighted(self.frame, body_alpha, background, 1.0 - body_alpha, 0)
-            out_frame = np.where(mask_3d, faded_body, background)
+            cv2.copyTo(faded_body, active_u8, out_frame)
 
             self.shockwave_radius += int(25 * (1.0 - progress * 0.5))
             if self.shockwave_radius < max(self.w, self.h):
                 cv2.circle(out_frame, self.snap_pos, self.shockwave_radius, (255, 220, 100), max(1, int(6 * (1.0 - progress))))
                 cv2.circle(out_frame, self.snap_pos, max(1, self.shockwave_radius - 12), (0, 180, 255), 2)
 
-            for p in self.particles:
-                p.x += p.vx
-                p.y += p.vy
-                p.vx *= 0.985
-                p.vy *= 0.985
-                p.life = 1.0
-            return _draw_glow_layer(out_frame, self.particles, self._layer)
+            if ps.count:
+                ps.x += ps.vx
+                ps.y += ps.vy
+                ps.vx *= 0.985
+                ps.vy *= 0.985
+                ps.life.fill(1.0)
+            return _draw_glow_layer(out_frame, ps, self._layer)
 
         if age < P2_VORTEX_END:
-            cx, cy = self.snap_pos
-            for p in self.particles:
-                dx, dy = cx - p.x, cy - p.y
-                d = max(1.0, math.hypot(dx, dy))
-                ux, uy = dx / d, dy / d
-                p.vx = p.vx * 0.82 + ux * 4.2 - uy * 4.6
-                p.vy = p.vy * 0.82 + uy * 4.2 + ux * 4.6
-                p.x += p.vx
-                p.y += p.vy
-                p.life = 1.0
-            _draw_glow_layer(out_frame, self.particles, self._layer)
+            if ps.count:
+                cx, cy = float(self.snap_pos[0]), float(self.snap_pos[1])
+                dx = cx - ps.x
+                dy = cy - ps.y
+                d = np.maximum(1.0, np.hypot(dx, dy))
+                ux = dx / d
+                uy = dy / d
+                ps.vx = ps.vx * 0.82 + ux * 4.2 - uy * 4.6
+                ps.vy = ps.vy * 0.82 + uy * 4.2 + ux * 4.6
+                ps.x += ps.vx
+                ps.y += ps.vy
+                ps.life.fill(1.0)
+            _draw_glow_layer(out_frame, ps, self._layer)
             core_r = 14 + int(4 * math.sin(age * 18))
             cv2.circle(out_frame, self.snap_pos, core_r + 8, (0, 60, 120), -1)
             cv2.circle(out_frame, self.snap_pos, core_r, (0, 0, 0), -1)
@@ -266,29 +287,35 @@ class SnapVoidEffect:
         if age < P3_ASSEMBLE_END:
             if not self.msg_assigned:
                 self._assign_message_targets()
-            for p in self.particles:
-                if p.tx is not None:
-                    p.x += (p.tx - p.x) * p.ease
-                    p.y += (p.ty - p.y) * p.ease
-                    p.life = 1.0
-                else:
-                    p.x += p.vx * 0.4
-                    p.y += p.vy * 0.4 - 0.3
-                    p.life = max(0.0, p.life - 0.012)
-            return _draw_glow_layer(out_frame, self.particles, self._layer)
+            if ps.count:
+                tgt = ps.has_target
+                free = ~tgt
+                if np.any(tgt):
+                    ps.x[tgt] += (ps.tx[tgt] - ps.x[tgt]) * ps.ease[tgt]
+                    ps.y[tgt] += (ps.ty[tgt] - ps.y[tgt]) * ps.ease[tgt]
+                    ps.life[tgt] = 1.0
+                if np.any(free):
+                    ps.x[free] += ps.vx[free] * 0.4
+                    ps.y[free] += ps.vy[free] * 0.4 - 0.3
+                    ps.life[free] = np.maximum(0.0, ps.life[free] - 0.012)
+            return _draw_glow_layer(out_frame, ps, self._layer)
 
         now = time.perf_counter()
         if age < P4_HOLD_END:
-            for p in self.particles:
-                if p.tx is not None:
-                    p.x = p.tx + math.sin(now * 2.0 + p.twinkle) * 1.2
-                    p.y = p.ty + math.cos(now * 1.6 + p.twinkle) * 1.2
-                    p.life = 0.72 + 0.28 * math.sin(now * 6.0 + p.twinkle)
-                else:
-                    p.x += p.vx * 0.2
-                    p.y += p.vy * 0.2 - 0.2
-                    p.life = max(0.0, p.life - 0.010)
-            return _draw_glow_layer(out_frame, self.particles, self._layer)
+            if ps.count:
+                tgt = ps.has_target
+                free = ~tgt
+                if np.any(tgt):
+                    phase_x = now * 2.0 + ps.twinkle[tgt]
+                    phase_y = now * 1.6 + ps.twinkle[tgt]
+                    ps.x[tgt] = ps.tx[tgt] + np.sin(phase_x) * 1.2
+                    ps.y[tgt] = ps.ty[tgt] + np.cos(phase_y) * 1.2
+                    ps.life[tgt] = 0.72 + 0.28 * np.sin(now * 6.0 + ps.twinkle[tgt])
+                if np.any(free):
+                    ps.x[free] += ps.vx[free] * 0.2
+                    ps.y[free] += ps.vy[free] * 0.2 - 0.2
+                    ps.life[free] = np.maximum(0.0, ps.life[free] - 0.010)
+            return _draw_glow_layer(out_frame, ps, self._layer)
 
         if age < SNAP_SECONDS:
             if self.void_bbox is not None:
@@ -297,21 +324,25 @@ class SnapVoidEffect:
                 line_y = y0 - 30 + (y1 - y0 + 60) * crumble_progress
             else:
                 line_y = 0.0
-            for p in self.particles:
-                if p.tx is not None and p.ty <= line_y:
-                    p.tx = p.ty = None
-                    p.vx = random.uniform(-1.0, 1.0)
-                    p.vy = random.uniform(-1.5, 0.0)
-                if p.tx is None:
-                    p.vy += 0.35
-                    p.x += p.vx
-                    p.y += p.vy
-                    p.life = max(0.0, p.life - 0.016)
-                else:
-                    p.x = p.tx + math.sin(now * 2.0 + p.twinkle) * 1.2
-                    p.y = p.ty + math.cos(now * 1.6 + p.twinkle) * 1.2
-                    p.life = 0.72 + 0.28 * math.sin(now * 6.0 + p.twinkle)
-            return _draw_glow_layer(out_frame, self.particles, self._layer)
+            if ps.count:
+                release = ps.has_target & (ps.ty <= line_y)
+                n_rel = int(np.sum(release))
+                if n_rel:
+                    ps.has_target[release] = False
+                    ps.vx[release] = self._rng.uniform(-1.0, 1.0, size=n_rel).astype(np.float32)
+                    ps.vy[release] = self._rng.uniform(-1.5, 0.0, size=n_rel).astype(np.float32)
+                tgt = ps.has_target
+                free = ~tgt
+                if np.any(free):
+                    ps.vy[free] += 0.35
+                    ps.x[free] += ps.vx[free]
+                    ps.y[free] += ps.vy[free]
+                    ps.life[free] = np.maximum(0.0, ps.life[free] - 0.016)
+                if np.any(tgt):
+                    ps.x[tgt] = ps.tx[tgt] + np.sin(now * 2.0 + ps.twinkle[tgt]) * 1.2
+                    ps.y[tgt] = ps.ty[tgt] + np.cos(now * 1.6 + ps.twinkle[tgt]) * 1.2
+                    ps.life[tgt] = 0.72 + 0.28 * np.sin(now * 6.0 + ps.twinkle[tgt])
+            return _draw_glow_layer(out_frame, ps, self._layer)
 
         return out_frame
 
@@ -321,35 +352,53 @@ class SnapRebuildEffect:
 
     def __init__(self, mask: np.ndarray, width: int, height: int) -> None:
         self._layer = np.zeros((height, width, 3), np.uint8)
-        self.particles: list[_Particle] = []
+        rng = np.random.default_rng()
         ys, xs = np.where(mask > 0.5)
-        if len(xs) > 0:
-            sample_count = min(800, len(xs))
-            indices = np.random.choice(len(xs), size=sample_count, replace=False)
-            for idx in indices:
-                tx, ty = float(xs[idx]), float(ys[idx])
-                side = random.random()
-                if side < 0.25:
-                    sx, sy = random.uniform(-80, width + 80), -80.0
-                elif side < 0.5:
-                    sx, sy = random.uniform(-80, width + 80), height + 80.0
-                elif side < 0.75:
-                    sx, sy = -80.0, random.uniform(-80, height + 80)
-                else:
-                    sx, sy = width + 80.0, random.uniform(-80, height + 80)
-                color = random.choice(STONE_COLORS + (GOLD,))
-                self.particles.append(_Particle(sx, sy, color, size=2, target=(tx, ty)))
+        if len(xs) == 0:
+            self.particles = _ParticleSystem(0)
+            return
+
+        sample_count = min(800, len(xs))
+        indices = rng.choice(len(xs), size=sample_count, replace=False)
+        ps = _ParticleSystem(sample_count)
+        ps.tx = xs[indices].astype(np.float32)
+        ps.ty = ys[indices].astype(np.float32)
+        ps.has_target.fill(True)
+
+        sides = rng.integers(0, 4, size=sample_count)
+        sx = np.empty(sample_count, dtype=np.float32)
+        sy = np.empty(sample_count, dtype=np.float32)
+        m0 = sides == 0
+        m1 = sides == 1
+        m2 = sides == 2
+        m3 = sides == 3
+        sx[m0] = rng.uniform(-80, width + 80, size=int(np.sum(m0)))
+        sy[m0] = -80.0
+        sx[m1] = rng.uniform(-80, width + 80, size=int(np.sum(m1)))
+        sy[m1] = float(height + 80)
+        sx[m2] = -80.0
+        sy[m2] = rng.uniform(-80, height + 80, size=int(np.sum(m2)))
+        sx[m3] = float(width + 80)
+        sy[m3] = rng.uniform(-80, height + 80, size=int(np.sum(m3)))
+        ps.x = sx
+        ps.y = sy
+
+        palette = np.asarray(STONE_COLORS + (GOLD,), dtype=np.uint8)
+        ps.color = palette[rng.integers(0, len(palette), size=sample_count)]
+        self.particles = ps
 
     def render(self, frame: np.ndarray, background: np.ndarray, mask: np.ndarray, age: float) -> np.ndarray:
         progress = min(1.0, age / REBUILD_SECONDS)
         ease = 1.0 - (1.0 - progress) ** 3
-        mask_3d = (mask > 0.5)[:, :, np.newaxis]
+        active_u8 = (mask > 0.5).view(np.uint8)
         body = cv2.addWeighted(frame, ease, background, 1.0 - ease, 0)
-        out_frame = np.where(mask_3d, body, background)
+        out_frame = background.copy()
+        cv2.copyTo(body, active_u8, out_frame)
 
-        follow = min(1.0, ease + 0.15)
-        for sp in self.particles:
-            sp.x += (sp.tx - sp.x) * follow
-            sp.y += (sp.ty - sp.y) * follow
-            sp.life = 1.0 - progress * 0.6
-        return _draw_glow_layer(out_frame, self.particles, self._layer)
+        ps = self.particles
+        if ps.count:
+            follow = min(1.0, ease + 0.15)
+            ps.x += (ps.tx - ps.x) * follow
+            ps.y += (ps.ty - ps.y) * follow
+            ps.life.fill(max(0.0, 1.0 - progress * 0.6))
+        return _draw_glow_layer(out_frame, ps, self._layer, kernel=_SMALL_SPARK_KERNEL)

@@ -34,7 +34,7 @@ Item {
     readonly property bool isFrozen: camRunning && camPhase === "frozen"
     readonly property bool isVanished: camRunning && (camPhase === "vanished" || camPhase.indexOf("vanish") !== -1 || camPhase.indexOf("disappear") !== -1)
 
-    readonly property var modesModel: [
+    readonly property var fallbackModesModel: [
         { id: "snap", label: "Snap Void", vanishHint: "Pinch & snap", reappearHint: "Peace sign / R" },
         { id: "naruto", label: "Naruto Log", vanishHint: "Join both hands", reappearHint: "Button / R" },
         { id: "normal", label: "Dissolve", vanishHint: "Peace sign", reappearHint: "Button / R" },
@@ -42,6 +42,9 @@ Item {
         { id: "itachi", label: "Itachi Crows", vanishHint: "Hands at chest", reappearHint: "Hands at chest / R" },
         { id: "goku", label: "Goku Teleport", vanishHint: "Forehead 1s", reappearHint: "Forehead 1s / R" }
     ]
+    readonly property var modesModel: (mainInstance && mainInstance.modesModel && mainInstance.modesModel.length > 0)
+        ? mainInstance.modesModel
+        : fallbackModesModel
 
     readonly property var activeModeInfo: {
         for (let i = 0; i < modesModel.length; i++) {
