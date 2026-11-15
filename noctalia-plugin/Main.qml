@@ -15,6 +15,7 @@ Item {
     readonly property bool startHidden: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.startHidden !== undefined) ? pluginApi.pluginSettings.startHidden : true
     readonly property bool ecoMode: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.ecoMode !== undefined) ? pluginApi.pluginSettings.ecoMode : false
     readonly property string savedSnapMessage: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.customSnapMessage) ? pluginApi.pluginSettings.customSnapMessage : ""
+    readonly property string savedVirtualBg: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.virtualBgPath) ? pluginApi.pluginSettings.virtualBgPath : ""
     readonly property string cliCommand: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.cliCommand) ? pluginApi.pluginSettings.cliCommand : "vanish-cam"
 
     property bool camRunning: false
@@ -25,6 +26,7 @@ Item {
     property bool previewVisible: !startHidden
     property bool ghostEcho: false
     property bool blurBg: false
+    property string virtualBg: savedVirtualBg
     property string snapMessage: savedSnapMessage ? savedSnapMessage : "BRB..."
     property var modesModel: [
         { id: "snap", label: "Snap Void", shortLabel: "SNAP", vanishHint: "Pinch & snap", reappearHint: "Peace sign / R", icon: "sparkles" },
@@ -76,6 +78,7 @@ Item {
                     root.previewVisible = data.preview_visible !== undefined ? Boolean(data.preview_visible) : !root.startHidden;
                     root.ghostEcho = Boolean(data.ghost_echo);
                     root.blurBg = Boolean(data.blur_bg);
+                    root.virtualBg = data.virtual_bg || "";
                     if (data.snap_message) {
                         root.snapMessage = data.snap_message;
                     }
@@ -84,6 +87,7 @@ Item {
                     root.gesturesPaused = false;
                     root.ghostEcho = false;
                     root.blurBg = false;
+                    root.virtualBg = root.savedVirtualBg;
                     if (root.savedSnapMessage) {
                         root.snapMessage = root.savedSnapMessage;
                     }
@@ -134,6 +138,8 @@ Item {
         if (root.ecoMode) args.push("--width", "960", "--height", "540", "--fps", "24");
         const msg = (root.savedSnapMessage || "").trim();
         if (msg) args.push("--snap-text", msg);
+        const vbg = (root.savedVirtualBg || "").trim();
+        if (vbg) args.push("--bg-image", vbg);
         return args;
     }
 
@@ -209,6 +215,36 @@ Item {
         if (root.camRunning) runCli(["next-text"]);
     }
 
+    Process {
+        id: bgPickerProc
+        command: ["zenity", "--file-selection", "--title=Choose Virtual Background", "--file-filter=Images | *.png *.jpg *.jpeg *.webp *.bmp"]
+        stdout: SplitParser {
+            onRead: data => {
+                const picked = (data || "").trim();
+                if (picked) root.setVirtualBg(picked);
+            }
+        }
+    }
+
+    function setVirtualBg(spec) {
+        const cleaned = (spec || "").trim();
+        const nextVal = (!cleaned || cleaned === "off" || cleaned === "none") ? "" : cleaned;
+        root.virtualBg = nextVal;
+        if (pluginApi && pluginApi.pluginSettings) {
+            pluginApi.pluginSettings.virtualBgPath = nextVal;
+            pluginApi.saveSettings();
+        }
+        if (root.camRunning) {
+            runCli(["bg-image", nextVal ? nextVal : "off"]);
+        }
+    }
+
+    function browseVirtualBg() {
+        if (!bgPickerProc.running) {
+            bgPickerProc.running = true;
+        }
+    }
+
     function setExcuse(text) {
         const cleaned = (text || "").trim().toUpperCase();
         if (!cleaned) return;
@@ -231,5 +267,6 @@ Item {
         function pause() { root.togglePause(); }
         function preview() { root.togglePreview(); }
         function mode(name: string) { root.switchMode(name); }
+        function bg(spec: string) { root.setVirtualBg(spec); }
     }
 }

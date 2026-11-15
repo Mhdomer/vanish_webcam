@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from local_app import hud, ipc
+from local_app import hud, ipc, virtual_bg
 from local_app import vanish_cam as app
 from local_app.itachi_effect import ItachiPoseRecognizer
 from local_app.snap_effect import P1_DISSOLVE_END, P2_VORTEX_END, P3_ASSEMBLE_END, P4_HOLD_END, SNAP_SECONDS, SnapRebuildEffect, SnapVoidEffect
@@ -135,6 +135,74 @@ class AsyncAllModesTests(unittest.TestCase):
                     stack.enter_context(patch.object(app.cv2, name))
                 with ExitStack() as res:
                     self.assertEqual(app.run_camera(args, res, mode), 0)
+
+
+class VirtualBackgroundTests(unittest.TestCase):
+    def test_presets_and_custom_center_crop_image(self):
+        for preset in virtual_bg.PRESET_IDS:
+            img, label = virtual_bg.load_virtual_background(preset, 160, 90)
+            self.assertIsNotNone(img)
+            self.assertEqual(label, preset)
+            self.assertEqual(img.shape, (90, 160, 3))
+            blurred = virtual_bg.make_blurred_background(img)
+            self.assertEqual(blurred.shape, (90, 160, 3))
+
+        with TemporaryDirectory() as tmp:
+            p = Path(tmp) / "portrait.png"
+            raw = np.full((300, 100, 3), (10, 200, 30), dtype=np.uint8)
+            app.cv2.imwrite(str(p), raw)
+            cropped, label = virtual_bg.load_virtual_background(str(p), 160, 90)
+            self.assertIsNotNone(cropped)
+            self.assertEqual(cropped.shape, (90, 160, 3))
+            self.assertEqual(label, str(p))
+
+        off_img, off_label = virtual_bg.load_virtual_background("off", 160, 90)
+        self.assertIsNone(off_img)
+        self.assertEqual(off_label, "")
+
+    def test_run_camera_bg_image_skips_calibration_and_switches_live(self):
+        frame = np.full((60, 80, 3), 240, dtype=np.uint8)
+        capture = Mock(read=Mock(return_value=(True, frame)))
+        recognizer = Mock()
+        recognizer.last_hand_count = 0
+        recognizer.detect_snap.return_value = (False, False, (0, 0))
+        segmenter = Mock()
+        fake_virtual = Mock(width=80, height=60)
+        args = argparse.Namespace(
+            camera=0, width=80, height=60, fps=30.0, fullscreen=False,
+            no_mirror=True, virtual_camera=True, virtual_backend=None,
+            virtual_device=None, gesture_debug=False, mode="snap",
+            async_gestures=False, no_preview=True, reuse_bg=False,
+            bg_delay=7.0, preview_hud=False, snap_text="BRB", bg_image="studio-dark",
+        )
+        clock = [0.0]
+
+        def tick():
+            clock[0] += 0.1
+            return clock[0]
+
+        cmd_seq = [[], ["bg-image:cyber-grid"], ["quit"]]
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app, "download_models"))
+            stack.enter_context(patch.object(app, "open_camera", return_value=capture))
+            stack.enter_context(patch.object(app, "create_tasks", return_value=(segmenter, recognizer)))
+            stack.enter_context(patch.object(app, "open_virtual_camera", return_value=fake_virtual))
+            stack.enter_context(patch.object(app, "VanishSound", return_value=Mock()))
+            stack.enter_context(patch.object(app, "person_mask", return_value=np.zeros((60, 80), dtype=np.float32)))
+            stack.enter_context(patch.object(app, "write_ipc_state"))
+            stack.enter_context(patch.object(app, "poll_ipc_commands", side_effect=lambda: cmd_seq.pop(0) if cmd_seq else ["quit"]))
+            stack.enter_context(patch.object(app.time, "perf_counter", side_effect=tick))
+            for name in ("namedWindow", "resizeWindow", "destroyAllWindows", "imshow"):
+                stack.enter_context(patch.object(app.cv2, name))
+            with ExitStack() as res:
+                self.assertEqual(app.run_camera(args, res, "snap"), 0)
+
+        sent = [call.args[0] for call in fake_virtual.send.call_args_list]
+        self.assertGreaterEqual(len(sent), 3)
+        studio_expected, _ = virtual_bg.load_virtual_background("studio-dark", 80, 60)
+        cyber_expected, _ = virtual_bg.load_virtual_background("cyber-grid", 80, 60)
+        self.assertLessEqual(int(np.max(np.abs(sent[0].astype(int) - studio_expected.astype(int)))), 2)
+        self.assertLessEqual(int(np.max(np.abs(sent[-1].astype(int) - cyber_expected.astype(int)))), 2)
 
 
 if __name__ == "__main__":

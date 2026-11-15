@@ -18,7 +18,7 @@ Item {
     property bool panelReady: true
     property bool showGuide: false
     property real contentPreferredWidth: 420 * Style.uiScaleRatio
-    property real contentPreferredHeight: (root.showGuide ? 810 : 625) * Style.uiScaleRatio
+    property real contentPreferredHeight: (root.showGuide ? 920 : 735) * Style.uiScaleRatio
 
     readonly property bool camRunning: mainInstance ? mainInstance.camRunning : false
     readonly property bool startingUp: mainInstance ? mainInstance.startingUp : false
@@ -28,7 +28,14 @@ Item {
     readonly property bool previewVisible: mainInstance ? mainInstance.previewVisible : false
     readonly property bool ghostEcho: mainInstance ? mainInstance.ghostEcho : false
     readonly property bool blurBg: mainInstance ? mainInstance.blurBg : false
+    readonly property string virtualBg: mainInstance ? mainInstance.virtualBg : ""
     readonly property string snapMessage: mainInstance ? mainInstance.snapMessage : "BRB..."
+    readonly property var vbgPresetsModel: [
+        { id: "", label: "Real Room" },
+        { id: "studio-dark", label: "Studio" },
+        { id: "minimal-blue", label: "Minimal" },
+        { id: "cyber-grid", label: "Cyber" }
+    ]
 
     readonly property bool isCalibrating: camRunning && camPhase === "calibrating"
     readonly property bool isFrozen: camRunning && camPhase === "frozen"
@@ -476,39 +483,98 @@ Item {
                 }
             }
 
-            // 5. Room Background Calibration
+            // 5. Virtual Background & Room Calibration
             NBox {
                 Layout.fillWidth: true
-                implicitHeight: bgRow.implicitHeight + Style.marginM * 2
+                implicitHeight: bgCol.implicitHeight + Style.marginM * 2
                 color: Color.mSurfaceVariant
 
-                RowLayout {
-                    id: bgRow
+                ColumnLayout {
+                    id: bgCol
                     anchors.fill: parent
                     anchors.margins: Style.marginM
                     spacing: Style.marginS
 
-                    NButton {
+                    RowLayout {
                         Layout.fillWidth: true
-                        enabled: root.camRunning
-                        text: "Load Saved Room (B)"
-                        outlined: false
-                        backgroundColor: Color.mSurface
-                        textColor: Color.mOnSurface
-                        onClicked: {
-                            if (mainInstance) mainInstance.loadSavedRoom();
+                        NText {
+                            text: "Virtual Background"
+                            pointSize: Style.fontSizeS
+                            font.bold: true
+                            color: Color.mOnSurface
+                            Layout.fillWidth: true
+                        }
+                        NText {
+                            readonly property string activeLabel: {
+                                if (!root.virtualBg) return "Real Room";
+                                const parts = root.virtualBg.split("/");
+                                return parts[parts.length - 1];
+                            }
+                            text: activeLabel
+                            pointSize: Style.fontSizeXS
+                            font.bold: true
+                            color: root.virtualBg ? Color.mPrimary : Color.mOnSurfaceVariant
+                            elide: Text.ElideMiddle
+                            Layout.maximumWidth: 160 * Style.uiScaleRatio
                         }
                     }
 
-                    NButton {
+                    RowLayout {
                         Layout.fillWidth: true
-                        enabled: root.camRunning
-                        text: "Recapture Room (7s)"
-                        outlined: false
-                        backgroundColor: Color.mSurface
-                        textColor: Color.mOnSurface
-                        onClicked: {
-                            if (mainInstance) mainInstance.recaptureRoom();
+                        spacing: Style.marginXS
+
+                        Repeater {
+                            model: root.vbgPresetsModel
+                            delegate: NButton {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                text: modelData.label
+                                outlined: false
+                                backgroundColor: (root.virtualBg === modelData.id) ? Color.mPrimary : Color.mSurface
+                                textColor: (root.virtualBg === modelData.id) ? Color.mOnPrimary : Color.mOnSurface
+                                onClicked: {
+                                    if (mainInstance) mainInstance.setVirtualBg(modelData.id);
+                                }
+                            }
+                        }
+
+                        NButton {
+                            text: "Browse"
+                            outlined: false
+                            backgroundColor: (root.virtualBg && root.virtualBg.indexOf("/") !== -1) ? Color.mSecondary : Color.mSurface
+                            textColor: (root.virtualBg && root.virtualBg.indexOf("/") !== -1) ? Color.mOnSecondary : Color.mOnSurface
+                            onClicked: {
+                                if (mainInstance) mainInstance.browseVirtualBg();
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Style.marginS
+
+                        NButton {
+                            Layout.fillWidth: true
+                            enabled: root.camRunning
+                            text: "Load Saved Room (B)"
+                            outlined: false
+                            backgroundColor: Color.mSurface
+                            textColor: Color.mOnSurface
+                            onClicked: {
+                                if (mainInstance) mainInstance.loadSavedRoom();
+                            }
+                        }
+
+                        NButton {
+                            Layout.fillWidth: true
+                            enabled: root.camRunning
+                            text: "Recapture Room (7s)"
+                            outlined: false
+                            backgroundColor: Color.mSurface
+                            textColor: Color.mOnSurface
+                            onClicked: {
+                                if (mainInstance) mainInstance.recaptureRoom();
+                            }
                         }
                     }
                 }

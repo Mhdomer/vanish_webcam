@@ -91,6 +91,23 @@ case "$cmd" in
         [[ $# -ge 1 ]] || { echo "Usage: vanish-cam snap-text \"MESSAGE\"" >&2; exit 1; }
         send_cmd "snap-text:$*"
         ;;
+    bg-image)
+        [[ $# -ge 1 ]] || { echo "Usage: vanish-cam bg-image <studio-dark|minimal-blue|cyber-grid|PATH|off>" >&2; exit 1; }
+        if is_running; then
+            send_cmd "bg-image:$*"
+        elif [[ "$1" != "off" && "$1" != "none" ]]; then
+            "$0" bg --bg-image "$*"
+        fi
+        ;;
+    pick-bg)
+        picked="$(zenity --file-selection --title="Choose Virtual Background" --file-filter="Images | *.png *.jpg *.jpeg *.webp *.bmp" 2>/dev/null || true)"
+        if [[ -n "$picked" ]]; then
+            echo "$picked"
+            if is_running; then
+                send_cmd "bg-image:$picked"
+            fi
+        fi
+        ;;
     modes)
         MODES_FILE="$REPO/noctalia-plugin/modes.json"
         if [[ "${1:-}" == "--json" ]]; then
@@ -106,7 +123,7 @@ PY
     status)
         if ! is_running; then
             if [[ "${1:-}" == "--json" ]]; then
-                echo '{"running":false,"phase":"off","mode":"","gestures_paused":false,"preview_visible":false,"ghost_echo":false,"blur_bg":false,"snap_message":""}'
+                echo '{"running":false,"phase":"off","mode":"","gestures_paused":false,"preview_visible":false,"ghost_echo":false,"blur_bg":false,"virtual_bg":"","snap_message":""}'
             else
                 echo "VanishCam: off"
             fi
@@ -124,8 +141,9 @@ mode = d.get("mode", "?")
 phase = d.get("phase", "?")
 paused = "paused" if d.get("gestures_paused") else "active"
 preview = "shown" if d.get("preview_visible", True) else "hidden"
+vbg = f" | vbg={d.get(\"virtual_bg\")}" if d.get("virtual_bg") else ""
 extra = f" | text=\"{d.get(\"snap_message\")}\"" if d.get("snap_message") else ""
-print(f"VanishCam: running (pid={d.get(\"pid\")}) | mode={mode} | phase={phase} | gestures={paused} | preview={preview}{extra}")
+print(f"VanishCam: running (pid={d.get(\"pid\")}) | mode={mode} | phase={phase} | gestures={paused} | preview={preview}{vbg}{extra}")
 ' "$STATE_FILE"
             fi
         else
@@ -153,6 +171,8 @@ Commands:
   preview               Show / hide the local preview window
   recapture             Start empty-room background countdown
   load-bg               Reload last saved room background
+  bg-image <SPEC|off>   Set virtual background preset (studio-dark, minimal-blue, cyber-grid), path, or off
+  pick-bg               Open file picker to choose a custom virtual background image
   next-text             Cycle Snap mode excuse message
   snap-text "TEXT"      Set custom Snap mode excuse message live
   menu                  Toggle local H control menu in preview window

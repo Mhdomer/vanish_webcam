@@ -50,6 +50,7 @@ try:
         load_log, overlay_log, render_substitution, substitution_anchor,
     )
     from .vanish_sound import SOUND_PATH, TELEPORT_SOUND_PATH, VanishSound
+    from .virtual_bg import PRESET_IDS, load_virtual_background, make_blurred_background
 except ImportError:
     from goku_settings import choose_goku_delay
     from hud import _hud_menu_buttons, draw_preview_banner, draw_preview_hud
@@ -74,6 +75,7 @@ except ImportError:
         load_log, overlay_log, render_substitution, substitution_anchor,
     )
     from vanish_sound import SOUND_PATH, TELEPORT_SOUND_PATH, VanishSound
+    from virtual_bg import PRESET_IDS, load_virtual_background, make_blurred_background
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -144,6 +146,7 @@ class AppState:
     preview_visible: bool = True
     ghost_echo: bool = False
     blur_bg: bool = False
+    virtual_bg: str = ""
     editing_text: bool = False
     edit_buffer: str = ""
 
@@ -207,6 +210,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reuse-bg", action="store_true",
         help="Reuse the last saved empty-room background on startup (0s calibration)",
+    )
+    parser.add_argument(
+        "--bg-image", type=str, default=None,
+        help="Virtual background preset (studio-dark, minimal-blue, cyber-grid) or image path",
     )
     parser.add_argument(
         "--goku-delay", type=positive_seconds, default=None,
@@ -1123,6 +1130,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             set_fullscreen(True)
 
     background: np.ndarray | None = None
+    room_background: np.ndarray | None = None
+    blurred_background: np.ndarray | None = None
     background_samples: list[np.ndarray] = []
     last_mask: np.ndarray | None = None
     last_mask_at = float("-inf")
@@ -1152,6 +1161,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     preview_hud = bool(getattr(args, "preview_hud", False))
     pending_keys: list[int] = []
     pending_mode_switch: list[str] = []
+    pending_bg_specs: list[str] = []
     frame_size = [args.width, args.height]
     last_ipc_signature = None
     last_ipc_write = 0.0
@@ -1166,6 +1176,9 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 if rx1 <= x <= rx2 and ry1 <= y <= ry2:
                     if cmd.startswith("mode:"):
                         pending_mode_switch.append(cmd.split(":", 1)[1])
+                        return
+                    if cmd.startswith("bg-image:"):
+                        pending_bg_specs.append(cmd.split(":", 1)[1])
                         return
                     if cmd == "edit-text":
                         if state.editing_text:
@@ -1289,10 +1302,59 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
         if state.phase not in ("calibrating", "ready", "vanished"):
             state.phase = "ready"
         if state.phase == "vanished" and background is not None:
-            vanished_frame = background.copy()
+            vanished_frame = _effective_bg().copy()
         mode = new_mode
         last_ipc_signature = None
         print(f"[Webcam] Switched mode live -> {mode.upper()}")
+
+    def _effective_bg() -> np.ndarray | None:
+        if state.blur_bg and blurred_background is not None:
+            return blurred_background
+        return background
+
+    def _refresh_vanished_bg(cur_h: int) -> None:
+        nonlocal vanished_frame
+        eff = _effective_bg()
+        if eff is None or state.phase != "vanished":
+            return
+        vanished_frame = eff.copy()
+        if mode == "naruto" and log_anchor is not None:
+            overlay_log(vanished_frame, log_sprite, landed_log_anchor(log_anchor, cur_h), cache=log_cache)
+
+    def _apply_virtual_bg(spec: str, w: int, h: int) -> None:
+        nonlocal background, blurred_background, last_ipc_signature, bg_ready_until
+        cleaned = (spec or "").strip()
+        if cleaned == "cycle":
+            cycle_order = ("", *PRESET_IDS)
+            cur = state.virtual_bg if state.virtual_bg in cycle_order else ""
+            cleaned = cycle_order[(cycle_order.index(cur) + 1) % len(cycle_order)]
+        if not cleaned or cleaned.lower() in ("off", "none"):
+            state.virtual_bg = ""
+            background = room_background if room_background is not None else load_saved_background(w, h)
+            blurred_background = make_blurred_background(background)
+            if background is None:
+                state.phase = "calibrating"
+                state.calibration_started = time.perf_counter()
+            else:
+                if state.phase == "calibrating":
+                    state.phase = "ready"
+                _refresh_vanished_bg(h)
+            last_ipc_signature = None
+            print("[Webcam] Virtual background OFF (using real room).")
+            return
+        img, resolved = load_virtual_background(cleaned, w, h)
+        if img is None:
+            print(f"[Webcam] Virtual background not found: {cleaned}")
+            return
+        background = img
+        blurred_background = make_blurred_background(img)
+        state.virtual_bg = resolved
+        if state.phase == "calibrating":
+            state.phase = "ready"
+            bg_ready_until = time.perf_counter() + 1.2
+        _refresh_vanished_bg(h)
+        last_ipc_signature = None
+        print(f"[Webcam] Virtual background active: {resolved}")
     print(f"[Webcam] Step out of frame for {calibration_seconds:g}s: capturing background (ENTER to capture now).")
     print("[Webcam] Controls: H help, SPACE new background, B load saved room, G pause gestures, F fullscreen, Q quit.")
     if mode == "goku":
@@ -1385,13 +1447,17 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     resources.callback(virtual_camera.close)
             if not reused_bg_checked:
                 reused_bg_checked = True
-                if getattr(args, "reuse_bg", False) and background is None:
-                    saved = load_saved_background(width, height)
-                    if saved is not None:
-                        background = saved
-                        state.phase = "ready"
-                        bg_ready_until = time.perf_counter() + 1.5
-                        print("[Webcam] Loaded saved background (press SPACE to recapture).")
+                saved = load_saved_background(width, height) if getattr(args, "reuse_bg", False) else None
+                if saved is not None:
+                    room_background = saved
+                    background = saved
+                    blurred_background = make_blurred_background(saved)
+                    state.phase = "ready"
+                    bg_ready_until = time.perf_counter() + 1.5
+                    print("[Webcam] Loaded saved background (press SPACE to recapture).")
+                init_vbg = getattr(args, "bg_image", None)
+                if init_vbg:
+                    _apply_virtual_bg(init_vbg, width, height)
             if mode == "normal" and (dissolve_field is None or dissolve_field.shape != (height, width)):
                 dissolve_field, sparkle_noise = make_dissolve_fields(height, width)
             now = time.perf_counter()
@@ -1488,7 +1554,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         trigger_frame = ensure_live_frame(camera_frame)
                         mask_mp = mp_image if mp_image is not None else to_gesture_mp_image(trigger_frame)
                         mask = person_mask(segmenter, mask_mp, elapsed_ms, width, height)
-                        goku_effect = GokuTeleport(trigger_frame, background, mask)
+                        goku_effect = GokuTeleport(trigger_frame, _effective_bg(), mask)
                         appearing = state.phase == "vanished"
                         state.phase = "goku_appearing" if appearing else "goku_vanishing"
                         state.vanish_started = time.perf_counter()
@@ -1578,6 +1644,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         background = np.median(stack, axis=0).astype(np.uint8)
                     else:
                         background = camera_frame.copy()
+                    room_background = background
+                    blurred_background = make_blurred_background(background)
                     background_samples.clear()
                     state.phase = "ready"
                     bg_ready_until = now + 1.8
@@ -1595,15 +1663,17 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             elif mode == "goku" and state.phase in ("goku_vanishing", "goku_appearing"):
                 appearing = state.phase == "goku_appearing"
                 age = time.perf_counter() - state.vanish_started
-                display = goku_effect.render(background, age, appearing)
+                eff_bg = _effective_bg()
+                display = goku_effect.render(eff_bg, age, appearing)
                 if age >= TELEPORT_SECONDS:
                     state.phase = "ready" if appearing else "vanished"
-                    vanished_frame = None if appearing else background.copy()
+                    vanished_frame = None if appearing else eff_bg.copy()
 
             elif mode == "itachi" and state.phase in ("itachi_disappearing", "itachi_appearing"):
                 appearing = state.phase == "itachi_appearing"
                 age = max(0.0, time.perf_counter() - state.vanish_started)
-                display = itachi_effect.render(background, age, appearing)
+                eff_bg = _effective_bg()
+                display = itachi_effect.render(eff_bg, age, appearing)
                 if age >= ITACHI_SECONDS:
                     state.phase = "ready" if appearing else "vanished"
                     vanished_frame = None if appearing else display
@@ -1611,17 +1681,18 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
 
             elif mode == "snap" and state.phase == "snap_vanishing":
                 age = max(0.0, time.perf_counter() - state.vanish_started)
-                display = snap_effect.render(background, age)
+                eff_bg = _effective_bg()
+                display = snap_effect.render(eff_bg, age)
                 if age >= SNAP_SECONDS:
                     state.phase = "vanished"
-                    vanished_frame = background.copy()
+                    vanished_frame = eff_bg.copy()
                     snap_effect = None
 
             elif mode == "snap" and state.phase == "snap_rebuilding":
                 age = max(0.0, time.perf_counter() - state.vanish_started)
                 mp_image = to_gesture_mp_image(camera_frame)
                 mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
-                display = snap_rebuild.render(camera_frame, background, mask, age)
+                display = snap_rebuild.render(camera_frame, _effective_bg(), mask, age)
                 if age >= REBUILD_SECONDS:
                     state.phase = "ready"
                     snap_rebuild = None
@@ -1632,8 +1703,9 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 display = frozen_frame
 
             elif state.phase == "vanished":
+                eff_bg = _effective_bg()
                 if vanished_frame is None:
-                    vanished_frame = background.copy()
+                    vanished_frame = eff_bg.copy()
                     if mode == "naruto" and log_anchor is not None:
                         overlay_log(vanished_frame, log_sprite, landed_log_anchor(log_anchor, height),
                                     cache=log_cache)
@@ -1650,8 +1722,17 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             elif state.phase == "reappearing" and state.vanish_started is not None:
                 progress = min(1.0, max(0.0, (time.perf_counter() - state.vanish_started) / REAPPEAR_SECONDS))
                 ease = ease_in_out_cubic(progress)
-                base_frame = vanished_frame if vanished_frame is not None else background
-                display = cv2.addWeighted(camera_frame, ease, base_frame, 1.0 - ease, 0)
+                eff_bg = _effective_bg()
+                base_frame = vanished_frame if vanished_frame is not None else eff_bg
+                if state.virtual_bg or state.blur_bg:
+                    if last_mask is None or now - last_mask_at >= 0.08:
+                        mp_image = to_gesture_mp_image(camera_frame)
+                        last_mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
+                        last_mask_at = now
+                    live_fg = alpha_composite(camera_frame, eff_bg, last_mask) if state.virtual_bg else apply_room_blur(camera_frame, last_mask)
+                else:
+                    live_fg = camera_frame
+                display = cv2.addWeighted(live_fg, ease, base_frame, 1.0 - ease, 0)
                 if progress >= 1.0:
                     state.phase = "ready"
                     state.vanish_started = None
@@ -1726,10 +1807,11 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     if mode == "naruto" and log_anchor is None:
                         log_anchor = substitution_anchor(mask)
 
+                eff_bg = _effective_bg()
                 if mode == "naruto" and state.phase == "naruto_vanishing":
                     age = max(0.04, time.perf_counter() - state.vanish_started)
                     display = render_substitution(
-                        camera_frame, background, mask, log_sprite, log_anchor, age, log_cache
+                        camera_frame, eff_bg, mask, log_sprite, log_anchor, age, log_cache
                     )
                     if age >= EFFECT_SECONDS:
                         state.phase = "vanished"
@@ -1738,19 +1820,22 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     if particle_effect is None:
                         particle_effect = ParticleEffect(camera_frame, mask)
                     age = time.perf_counter() - state.vanish_started
-                    display = particle_effect.render(background, age)
+                    display = particle_effect.render(eff_bg, age)
                     if age >= PARTICLE_SECONDS:
                         state.phase = "vanished"
                         vanished_frame = display
                 elif state.phase == "ready":
-                    if state.blur_bg:
+                    if state.virtual_bg or state.blur_bg:
                         if mask is None or now - last_mask_at >= 0.08:
                             if mp_image is None:
                                 mp_image = to_gesture_mp_image(camera_frame)
                             mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                             last_mask = mask
                             last_mask_at = now
-                        display = apply_room_blur(camera_frame, mask)
+                        if state.virtual_bg:
+                            display = alpha_composite(camera_frame, eff_bg, mask)
+                        else:
+                            display = apply_room_blur(camera_frame, mask)
                     else:
                         display = camera_frame
                 else:
@@ -1762,7 +1847,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         if progress >= 1.0:
                             state.phase = "vanished"
                     display = apply_dissolve(
-                        camera_frame, background, mask, progress, dissolve_field, sparkle_noise
+                        camera_frame, eff_bg, mask, progress, dissolve_field, sparkle_noise
                     )
                     if state.phase == "vanished":
                         vanished_frame = display
@@ -1774,7 +1859,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 last_static_send = now
             frame_size[0], frame_size[1] = width, height
             active_snap_msg = snap_messages[snap_msg_idx % len(snap_messages)] if mode == "snap" else ""
-            ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, state.ghost_echo, state.blur_bg, active_snap_msg)
+            ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, state.ghost_echo, state.blur_bg, state.virtual_bg, active_snap_msg)
             if ipc_sig != last_ipc_signature or (now - last_ipc_write >= 2.0):
                 write_ipc_state(True, mode, state, active_snap_msg)
                 last_ipc_signature = ipc_sig
@@ -1839,6 +1924,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     target_mode = ipc_cmd.split(":", 1)[1].strip().lower()
                     if target_mode in ALL_MODES:
                         pending_mode_switch.append(target_mode)
+                elif ipc_cmd.startswith("bg-image:"):
+                    pending_bg_specs.append(ipc_cmd.split(":", 1)[1])
                 elif ipc_cmd == "toggle-action":
                     pending_keys.append(ord("r") if state.phase in ("vanished", "frozen") else ord("v"))
                 elif ipc_cmd == "preview":
@@ -1866,6 +1953,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
 
             while pending_mode_switch:
                 switch_mode(pending_mode_switch.pop(0))
+            while pending_bg_specs:
+                _apply_virtual_bg(pending_bg_specs.pop(0), width, height)
 
             raw_key = (cv2.waitKey(1) & 0xFF) if state.preview_visible else 255
             if state.editing_text and raw_key not in (0, 255):
@@ -1897,6 +1986,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 toggle_preview_window()
             elif key == ord("w") and preview_hud:
                 state.blur_bg = not state.blur_bg
+                _refresh_vanished_bg(height)
                 print(f"[Webcam] Background blur: {'ON' if state.blur_bg else 'OFF'}.")
             elif key == ord("z") and preview_hud:
                 if state.phase == "frozen":
@@ -1919,6 +2009,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 )
                 print("[Webcam] Capturing background now...")
             elif key == ord(" "):
+                state.virtual_bg = ""
                 state.phase = "calibrating"
                 state.calibration_started = now
                 state.vanish_started = None
@@ -1951,7 +2042,10 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             elif key == ord("b"):
                 saved = load_saved_background(width, height)
                 if saved is not None:
+                    state.virtual_bg = ""
+                    room_background = saved
                     background = saved
+                    blurred_background = make_blurred_background(saved)
                     background_samples.clear()
                     state.phase = "ready"
                     state.vanish_started = None
@@ -1997,7 +2091,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                     if cv2.findNonZero((mask > 0.04).astype(np.uint8)) is None:
                         cv2.ellipse(mask, (width // 2, int(height * 0.58)), (width // 5, int(height * 0.35)), 0, 0, 360, 1.0, -1)
-                    goku_effect = GokuTeleport(camera_frame, background, mask)
+                    goku_effect = GokuTeleport(camera_frame, _effective_bg(), mask)
                     if goku_gate is not None:
                         goku_gate.reset()
                     goku_countdown_remaining = None
@@ -2047,7 +2141,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 mask = person_mask(segmenter, mp_image, elapsed_ms, width, height)
                 if cv2.findNonZero((mask > 0.04).astype(np.uint8)) is None:
                     cv2.ellipse(mask, (width // 2, int(height * 0.58)), (width // 5, int(height * 0.35)), 0, 0, 360, 1.0, -1)
-                goku_effect = GokuTeleport(camera_frame, background, mask)
+                goku_effect = GokuTeleport(camera_frame, _effective_bg(), mask)
                 if goku_gate is not None:
                     goku_gate.reset()
                 goku_countdown_remaining = None

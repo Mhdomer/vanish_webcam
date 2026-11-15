@@ -56,12 +56,16 @@ def _hud_menu_buttons(w: int, h: int, mode: str, state) -> list[tuple[str, str, 
     action_cmd = "reappear" if is_away else "vanish"
     freeze_label = "Unfreeze Camera (Z)" if state.phase == "frozen" else "Freeze Frame (Z)"
     pause_label = "Resume Gestures (G)" if state.gestures_paused else "Pause Gestures (G)"
-    blur_label = f"Blur Room: {'ON' if state.blur_bg else 'OFF'} (W)"
+    blur_label = f"Blur BG: {'ON' if state.blur_bg else 'OFF'} (W)"
+    vbg = getattr(state, "virtual_bg", "") or ""
+    vbg_short = Path(vbg).stem[:14] if ("/" in vbg or "\\" in vbg) else vbg
+    vbg_label = f"Virtual BG: {vbg_short or 'OFF'}"
     echo_label = f"Ghost Echo: {'ON' if state.ghost_echo else 'OFF'} (E)"
     items = [
         (action_cmd, action_label),
         ("freeze", freeze_label),
         ("blur", blur_label),
+        ("bg-image:cycle", vbg_label),
         ("pause", pause_label),
         ("echo", echo_label),
         ("recapture", "Recapture Room (SPACE)"),
@@ -109,6 +113,8 @@ def draw_preview_hud(
     mode_tag = f"SNAP: {snap_message}" if mode == "snap" and snap_message else mode.upper()
     if state.phase == "frozen":
         mode_tag = f"{mode_tag} [FROZEN]"
+    elif getattr(state, "virtual_bg", ""):
+        mode_tag = f"{mode_tag} [VBG+BLUR]" if state.blur_bg else f"{mode_tag} [VBG]"
     elif state.blur_bg and state.phase == "ready":
         mode_tag = f"{mode_tag} [BLUR]"
     elif state.ghost_echo:
