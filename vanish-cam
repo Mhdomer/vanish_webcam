@@ -91,6 +91,23 @@ case "$cmd" in
         [[ $# -ge 1 ]] || { echo "Usage: vanish-cam snap-text \"MESSAGE\"" >&2; exit 1; }
         send_cmd "snap-text:$*"
         ;;
+    mirror)
+        arg="${1:-toggle}"
+        if is_running; then
+            case "$arg" in
+                on|true|1) send_cmd "mirror:on" ;;
+                off|false|0) send_cmd "mirror:off" ;;
+                toggle|"") send_cmd "mirror:toggle" ;;
+                *) echo "Usage: vanish-cam mirror [on|off|toggle]" >&2; exit 1 ;;
+            esac
+        else
+            case "$arg" in
+                off|false|0) "$0" bg --no-mirror ;;
+                on|true|1|toggle|"") "$0" bg ;;
+                *) echo "Usage: vanish-cam mirror [on|off|toggle]" >&2; exit 1 ;;
+            esac
+        fi
+        ;;
     bg-image)
         [[ $# -ge 1 ]] || { echo "Usage: vanish-cam bg-image <studio-dark|minimal-blue|cyber-grid|PATH|off>" >&2; exit 1; }
         if is_running; then
@@ -123,7 +140,7 @@ PY
     status)
         if ! is_running; then
             if [[ "${1:-}" == "--json" ]]; then
-                echo '{"running":false,"phase":"off","mode":"","gestures_paused":false,"preview_visible":false,"ghost_echo":false,"blur_bg":false,"virtual_bg":"","snap_message":""}'
+                echo '{"running":false,"phase":"off","mode":"","gestures_paused":false,"preview_visible":false,"ghost_echo":false,"blur_bg":false,"mirror":true,"virtual_bg":"","snap_message":""}'
             else
                 echo "VanishCam: off"
             fi
@@ -166,6 +183,7 @@ Commands:
   reappear              Reappear smoothly now
   freeze                Freeze / unfreeze current camera frame (0% CPU)
   blur                  Blur room background behind you (low CPU)
+  mirror [on|off]       Toggle horizontal mirror output (or fix Meet/Zoom double-flip)
   echo                  Toggle Ghost Echo replay while vanished
   pause                 Pause / resume gesture recognition
   preview               Show / hide the local preview window

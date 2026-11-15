@@ -60,12 +60,14 @@ def _hud_menu_buttons(w: int, h: int, mode: str, state) -> list[tuple[str, str, 
     vbg = getattr(state, "virtual_bg", "") or ""
     vbg_short = Path(vbg).stem[:14] if ("/" in vbg or "\\" in vbg) else vbg
     vbg_label = f"Virtual BG: {vbg_short or 'OFF'}"
+    mirror_label = f"Mirror Output: {'ON' if getattr(state, 'mirror', True) else 'OFF'} (M)"
     echo_label = f"Ghost Echo: {'ON' if state.ghost_echo else 'OFF'} (E)"
     items = [
         (action_cmd, action_label),
         ("freeze", freeze_label),
         ("blur", blur_label),
         ("bg-image:cycle", vbg_label),
+        ("mirror", mirror_label),
         ("pause", pause_label),
         ("echo", echo_label),
         ("recapture", "Recapture Room (SPACE)"),
@@ -119,6 +121,8 @@ def draw_preview_hud(
         mode_tag = f"{mode_tag} [BLUR]"
     elif state.ghost_echo:
         mode_tag = f"{mode_tag} [ECHO]"
+    if not getattr(state, "mirror", True):
+        mode_tag = f"{mode_tag} [RAW]"
     pill = f"{mode_tag}  |  GESTURES {gesture_state}  |  [H] MENU"
     (tw, th), _ = cv2.getTextSize(pill, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
     pad_x, pad_y = 12, 8

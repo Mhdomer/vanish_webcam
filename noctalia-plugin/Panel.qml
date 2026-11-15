@@ -28,6 +28,7 @@ Item {
     readonly property bool previewVisible: mainInstance ? mainInstance.previewVisible : false
     readonly property bool ghostEcho: mainInstance ? mainInstance.ghostEcho : false
     readonly property bool blurBg: mainInstance ? mainInstance.blurBg : false
+    readonly property bool mirrorCam: mainInstance ? mainInstance.mirrorCam : true
     readonly property string virtualBg: mainInstance ? mainInstance.virtualBg : ""
     readonly property string snapMessage: mainInstance ? mainInstance.snapMessage : "BRB..."
     readonly property var vbgPresetsModel: [
@@ -318,7 +319,6 @@ Item {
 
                         NButton {
                             Layout.fillWidth: true
-                            Layout.columnSpan: 2
                             enabled: root.camRunning
                             text: root.previewVisible ? "Hide Preview (P)" : "Show Preview (P)"
                             outlined: false
@@ -326,6 +326,17 @@ Item {
                             textColor: root.previewVisible ? Color.mSecondary : Color.mOnSurface
                             onClicked: {
                                 if (mainInstance) mainInstance.togglePreview();
+                            }
+                        }
+
+                        NButton {
+                            Layout.fillWidth: true
+                            text: root.mirrorCam ? "Mirror: ON (M)" : "Mirror: OFF (M)"
+                            outlined: false
+                            backgroundColor: root.mirrorCam ? Qt.alpha(Color.mPrimary, 0.25) : Color.mSurface
+                            textColor: root.mirrorCam ? Color.mPrimary : Color.mOnSurface
+                            onClicked: {
+                                if (mainInstance) mainInstance.toggleMirror();
                             }
                         }
                     }

@@ -304,5 +304,62 @@ class GokuReappearTests(unittest.TestCase):
         self.assertIn("ready", phases_seen[vanished_idx + 1:])
 
 
+class MirrorToggleTests(unittest.TestCase):
+    def test_live_mirror_toggle_flips_live_frames_and_updates_ipc(self):
+        raw_frame = np.zeros((60, 80, 3), dtype=np.uint8)
+        raw_frame[:, :40] = 220  # Left half bright in raw camera space
+
+        capture = Mock()
+        capture.isOpened.return_value = True
+        capture.read.side_effect = lambda: (True, raw_frame.copy())
+        segmenter = SimpleNamespace(close=lambda: None)
+        recognizer = SimpleNamespace(detect_snap=Mock(return_value=(False, False, (0, 0))), close=lambda: None)
+        fake_virtual = Mock()
+        fake_virtual.width = 80
+        fake_virtual.height = 60
+
+        args = argparse.Namespace(
+            camera=0, width=80, height=60, fps=30, no_mirror=False, no_virtual_camera=False,
+            virtual_camera=True, virtual_backend="v4l2loopback", virtual_device="/dev/video0",
+            async_gestures=False, no_preview=True, reuse_bg=False, fullscreen=False,
+            bg_delay=0.6, preview_hud=True, snap_text="BRB", bg_image=None,
+        )
+        clock = [0.0]
+
+        def tick():
+            clock[0] += 0.35
+            return clock[0]
+
+        # Wait until calibration completes (frames 0..1), verify mirrored frame (right bright),
+        # send mirror:off -> verify unmirrored frame (left bright), then vanish -> mirror:on flips room.
+        ipc_states = []
+        cmd_seq = [[], [], ["mirror:off"], [], ["quit"]]
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app, "download_models"))
+            stack.enter_context(patch.object(app, "open_camera", return_value=capture))
+            stack.enter_context(patch.object(app, "create_tasks", return_value=(segmenter, recognizer)))
+            stack.enter_context(patch.object(app, "open_virtual_camera", return_value=fake_virtual))
+            stack.enter_context(patch.object(app, "VanishSound", return_value=Mock()))
+            stack.enter_context(patch.object(app, "save_background"))
+            stack.enter_context(patch.object(app, "write_ipc_state", side_effect=lambda running, mode="", state=None, *a, **kw: ipc_states.append(bool(getattr(state, "mirror", True))) if running else None))
+            stack.enter_context(patch.object(app, "poll_ipc_commands", side_effect=lambda: cmd_seq.pop(0) if cmd_seq else ["quit"]))
+            stack.enter_context(patch.object(app.time, "perf_counter", side_effect=tick))
+            for name in ("namedWindow", "resizeWindow", "destroyAllWindows", "imshow"):
+                stack.enter_context(patch.object(app.cv2, name))
+            with ExitStack() as res:
+                self.assertEqual(app.run_camera(args, res, "snap"), 0)
+
+        sent = [call.args[0] for call in fake_virtual.send.call_args_list]
+        self.assertGreaterEqual(len(sent), 4)
+        # Initial mirrored frames: right half bright (> 150), left half dark (< 50)
+        self.assertGreater(int(sent[2][30, 60, 0]), 150)
+        self.assertLess(int(sent[2][30, 20, 0]), 50)
+        # After mirror:off: raw orientation (left half bright, right half dark)
+        self.assertGreater(int(sent[-1][30, 20, 0]), 150)
+        self.assertLess(int(sent[-1][30, 60, 0]), 50)
+        self.assertIn(True, ipc_states)
+        self.assertIn(False, ipc_states)
+
+
 if __name__ == "__main__":
     unittest.main()

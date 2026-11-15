@@ -45,6 +45,7 @@ def write_ipc_state(
         "preview_visible": bool(state.preview_visible) if (running and state is not None) else False,
         "ghost_echo": bool(state.ghost_echo) if (running and state is not None) else False,
         "blur_bg": bool(state.blur_bg) if (running and state is not None) else False,
+        "mirror": bool(getattr(state, "mirror", True)) if (running and state is not None) else True,
         "virtual_bg": str(getattr(state, "virtual_bg", "") or "") if (running and state is not None) else "",
         "snap_message": snap_message if (running and mode == "snap") else "",
         "updated_at": round(time.time(), 2),

@@ -146,6 +146,7 @@ class AppState:
     preview_visible: bool = True
     ghost_echo: bool = False
     blur_bg: bool = False
+    mirror: bool = True
     virtual_bg: str = ""
     editing_text: bool = False
     edit_buffer: str = ""
@@ -1122,6 +1123,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
         calibration_started=time.perf_counter(),
         fullscreen=args.fullscreen,
         preview_visible=start_preview,
+        mirror=not bool(getattr(args, "no_mirror", False)),
     )
     if state.preview_visible:
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
@@ -1162,6 +1164,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     pending_keys: list[int] = []
     pending_mode_switch: list[str] = []
     pending_bg_specs: list[str] = []
+    pending_mirror: list[bool] = []
     frame_size = [args.width, args.height]
     last_ipc_signature = None
     last_ipc_write = 0.0
@@ -1197,6 +1200,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         "reappear": ord("r"),
                         "freeze": ord("z"),
                         "blur": ord("w"),
+                        "mirror": ord("m"),
                         "pause": ord("g"),
                         "echo": ord("e"),
                         "recapture": ord(" "),
@@ -1357,6 +1361,36 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
         _refresh_vanished_bg(h)
         last_ipc_signature = None
         print(f"[Webcam] Virtual background active: {resolved}")
+
+    def _set_mirror(enabled: bool) -> None:
+        nonlocal room_background, background, blurred_background, background_samples
+        nonlocal vanished_frame, frozen_frame, log_anchor, last_mask, last_mask_at, last_ipc_signature
+        if enabled == state.mirror:
+            return
+        state.mirror = enabled
+        if room_background is not None:
+            room_background = cv2.flip(room_background, 1)
+        if blurred_background is not None and not state.virtual_bg:
+            blurred_background = cv2.flip(blurred_background, 1)
+        if background is not None and not state.virtual_bg:
+            background = room_background if room_background is not None else cv2.flip(background, 1)
+        if background_samples:
+            background_samples = [cv2.flip(sample, 1) for sample in background_samples]
+        if log_anchor is not None:
+            log_anchor = (max(0, frame_size[0] - 1 - log_anchor[0]), log_anchor[1], log_anchor[2])
+        if vanished_frame is not None:
+            if state.virtual_bg:
+                _refresh_vanished_bg(vanished_frame.shape[0])
+            else:
+                vanished_frame = cv2.flip(vanished_frame, 1)
+        if frozen_frame is not None:
+            frozen_frame = cv2.flip(frozen_frame, 1)
+        echo_buffer.clear()
+        last_mask = None
+        last_mask_at = float("-inf")
+        last_ipc_signature = None
+        print(f"[Webcam] Mirror output: {'ON' if state.mirror else 'OFF'}.")
+
     print(f"[Webcam] Step out of frame for {calibration_seconds:g}s: capturing background (ENTER to capture now).")
     print("[Webcam] Controls: H help, SPACE new background, B load saved room, G pause gestures, F fullscreen, Q quit.")
     if mode == "goku":
@@ -1383,7 +1417,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
         skipped_decode = False
         if not ok:
             return cur_frame
-        return live if args.no_mirror else cv2.flip(live, 1)
+        return cv2.flip(live, 1) if state.mirror else live
 
     VANISHED_GESTURE_INTERVALS = {"snap": 0.16, "goku": 0.10, "itachi": 0.09}
 
@@ -1437,7 +1471,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     and (state.gestures_paused or mode in ("normal", "naruto", "particles") or mode in VANISHED_GESTURE_INTERVALS)
                 )
             )
-            if not args.no_mirror and not skip_flip:
+            if state.mirror and not skip_flip:
                 camera_frame = cv2.flip(camera_frame, 1)
 
             height, width = camera_frame.shape[:2]
@@ -1875,7 +1909,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 last_static_send = now
             frame_size[0], frame_size[1] = width, height
             active_snap_msg = snap_messages[snap_msg_idx % len(snap_messages)] if mode == "snap" else ""
-            ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, state.ghost_echo, state.blur_bg, state.virtual_bg, active_snap_msg)
+            ipc_sig = (mode, state.phase, state.gestures_paused, state.preview_visible, state.ghost_echo, state.blur_bg, state.mirror, state.virtual_bg, active_snap_msg)
             if ipc_sig != last_ipc_signature or (now - last_ipc_write >= 2.0):
                 write_ipc_state(True, mode, state, active_snap_msg)
                 last_ipc_signature = ipc_sig
@@ -1952,6 +1986,14 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     pending_keys.append(ord("e"))
                 elif ipc_cmd == "blur":
                     pending_keys.append(ord("w"))
+                elif ipc_cmd in ("mirror", "mirror:toggle"):
+                    pending_keys.append(ord("m"))
+                elif ipc_cmd.startswith("mirror:"):
+                    mirror_arg = ipc_cmd.split(":", 1)[1].strip().lower()
+                    if mirror_arg in ("on", "true", "1"):
+                        pending_mirror.append(True)
+                    elif mirror_arg in ("off", "false", "0"):
+                        pending_mirror.append(False)
                 else:
                     cmd_map = {
                         "vanish": ord("v"),
@@ -1971,6 +2013,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 switch_mode(pending_mode_switch.pop(0))
             while pending_bg_specs:
                 _apply_virtual_bg(pending_bg_specs.pop(0), width, height)
+            while pending_mirror:
+                _set_mirror(pending_mirror.pop(0))
 
             raw_key = (cv2.waitKey(1) & 0xFF) if state.preview_visible else 255
             if state.editing_text and raw_key not in (0, 255):
@@ -2004,6 +2048,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                 state.blur_bg = not state.blur_bg
                 _refresh_vanished_bg(height)
                 print(f"[Webcam] Background blur: {'ON' if state.blur_bg else 'OFF'}.")
+            elif key == ord("m"):
+                _set_mirror(not state.mirror)
             elif key == ord("z") and preview_hud:
                 if state.phase == "frozen":
                     state.phase = "ready"
@@ -2074,7 +2120,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             elif key == ord("r"):
                 if skipped_decode:
                     camera_frame = ensure_live_frame(camera_frame)
-                elif skip_flip and not args.no_mirror:
+                elif skip_flip and state.mirror:
                     camera_frame = cv2.flip(camera_frame, 1)
                 if state.phase == "frozen":
                     state.phase = "ready"

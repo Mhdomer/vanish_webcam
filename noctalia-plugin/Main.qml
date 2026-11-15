@@ -14,6 +14,7 @@ Item {
     readonly property bool hideWhenOff: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.hideWhenOff !== undefined) ? pluginApi.pluginSettings.hideWhenOff : false
     readonly property bool startHidden: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.startHidden !== undefined) ? pluginApi.pluginSettings.startHidden : true
     readonly property bool ecoMode: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.ecoMode !== undefined) ? pluginApi.pluginSettings.ecoMode : false
+    readonly property bool savedMirror: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.mirrorCam !== undefined) ? Boolean(pluginApi.pluginSettings.mirrorCam) : true
     readonly property string savedSnapMessage: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.customSnapMessage) ? pluginApi.pluginSettings.customSnapMessage : ""
     readonly property string savedVirtualBg: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.virtualBgPath) ? pluginApi.pluginSettings.virtualBgPath : ""
     readonly property string cliCommand: (pluginApi && pluginApi.pluginSettings && pluginApi.pluginSettings.cliCommand) ? pluginApi.pluginSettings.cliCommand : "vanish-cam"
@@ -26,6 +27,7 @@ Item {
     property bool previewVisible: !startHidden
     property bool ghostEcho: false
     property bool blurBg: false
+    property bool mirrorCam: savedMirror
     property string virtualBg: savedVirtualBg
     property string snapMessage: savedSnapMessage ? savedSnapMessage : "BRB..."
     property var modesModel: [
@@ -78,6 +80,7 @@ Item {
                     root.previewVisible = data.preview_visible !== undefined ? Boolean(data.preview_visible) : !root.startHidden;
                     root.ghostEcho = Boolean(data.ghost_echo);
                     root.blurBg = Boolean(data.blur_bg);
+                    root.mirrorCam = data.mirror !== undefined ? Boolean(data.mirror) : root.savedMirror;
                     root.virtualBg = data.virtual_bg || "";
                     if (data.snap_message) {
                         root.snapMessage = data.snap_message;
@@ -87,6 +90,7 @@ Item {
                     root.gesturesPaused = false;
                     root.ghostEcho = false;
                     root.blurBg = false;
+                    root.mirrorCam = root.savedMirror;
                     root.virtualBg = root.savedVirtualBg;
                     if (root.savedSnapMessage) {
                         root.snapMessage = root.savedSnapMessage;
@@ -136,6 +140,7 @@ Item {
         const args = ["bg", "--mode", targetMode];
         if (root.startHidden) args.push("--no-preview");
         if (root.ecoMode) args.push("--width", "960", "--height", "540", "--fps", "24");
+        if (!root.mirrorCam) args.push("--no-mirror");
         const msg = (root.savedSnapMessage || "").trim();
         if (msg) args.push("--snap-text", msg);
         const vbg = (root.savedVirtualBg || "").trim();
@@ -184,6 +189,16 @@ Item {
 
     function toggleBlur() {
         if (root.camRunning) runCli(["blur"]);
+    }
+
+    function toggleMirror() {
+        const nextVal = !root.mirrorCam;
+        root.mirrorCam = nextVal;
+        if (pluginApi && pluginApi.pluginSettings) {
+            pluginApi.pluginSettings.mirrorCam = nextVal;
+            pluginApi.saveSettings();
+        }
+        if (root.camRunning) runCli(["mirror", nextVal ? "on" : "off"]);
     }
 
     function togglePause() {
@@ -263,6 +278,7 @@ Item {
         function action() { root.triggerAction(); }
         function freeze() { root.toggleFreeze(); }
         function blur() { root.toggleBlur(); }
+        function mirror() { root.toggleMirror(); }
         function echo() { root.toggleEcho(); }
         function pause() { root.togglePause(); }
         function preview() { root.togglePreview(); }
