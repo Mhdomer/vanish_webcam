@@ -1071,7 +1071,7 @@ def run(license_session=None) -> int:
         if getattr(args, "goku_delay", None) is not None:
             pass
         elif getattr(args, "no_preview", False) or getattr(args, "reuse_bg", False) or getattr(args, "preview_hud", False):
-            args.goku_delay = 0.30
+            args.goku_delay = 0.40
         else:
             args.goku_delay = choose_goku_delay(check_license=check) if check else choose_goku_delay()
             if args.goku_delay is None:
@@ -1139,7 +1139,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     itachi_effect: ItachiCrowEffect | None = None
     itachi_gate = ItachiGestureGate() if mode == "itachi" else None
     goku_effect: GokuTeleport | None = None
-    default_goku_delay = 0.30 if getattr(args, "preview_hud", False) else HOLD_SECONDS
+    default_goku_delay = 0.40 if getattr(args, "preview_hud", False) else HOLD_SECONDS
     goku_delay = getattr(args, "goku_delay", None) or default_goku_delay
     goku_gate = GokuGestureGate(hold_seconds=goku_delay) if mode == "goku" else None
     goku_countdown_remaining: float | None = None

@@ -41,30 +41,42 @@ def fingers_on_forehead(hands, faces, width: int, height: int) -> bool:
                    np.linalg.norm(points[0] - points[9]))
         if palm < 10:
             continue
-        if not (_finger_straight(points, (5, 6, 7, 8), 0.76)
-                and _finger_straight(points, (9, 10, 11, 12), 0.76)):
+        if not (_finger_straight(points, (5, 6, 7, 8), 0.78)
+                and _finger_straight(points, (9, 10, 11, 12), 0.78)):
             continue
-        if _finger_straight(points, (13, 14, 15, 16), 0.78) or _finger_straight(points, (17, 18, 19, 20), 0.78):
+        if _finger_straight(points, (13, 14, 15, 16), 0.75) or _finger_straight(points, (17, 18, 19, 20), 0.75):
             continue
-        if np.linalg.norm(points[8] - points[12]) > palm * 0.48:
+        wrist = points[0]
+        if (np.linalg.norm(points[8] - wrist) <= np.linalg.norm(points[6] - wrist) * 1.14
+                or np.linalg.norm(points[12] - wrist) <= np.linalg.norm(points[10] - wrist) * 1.14):
+            continue
+        if (np.linalg.norm(points[16] - wrist) > np.linalg.norm(points[14] - wrist) * 1.08
+                or np.linalg.norm(points[20] - wrist) > np.linalg.norm(points[18] - wrist) * 1.08):
             continue
         index_direction = points[8] - points[5]
         middle_direction = points[12] - points[9]
+        idx_len = float(np.linalg.norm(index_direction))
+        mid_len = float(np.linalg.norm(middle_direction))
+        if min(idx_len, mid_len) < max(idx_len, mid_len) * 0.72 or min(idx_len, mid_len) < palm * 0.55:
+            continue
+        if (np.linalg.norm(points[8] - points[12]) > palm * 0.42
+                or abs(float(points[8, 1] - points[12, 1])) > palm * 0.32):
+            continue
         alignment = np.dot(index_direction, middle_direction) / max(
-            np.linalg.norm(index_direction) * np.linalg.norm(middle_direction), 1e-6,
+            idx_len * mid_len, 1e-6,
         )
-        if alignment < 0.78:
+        if alignment < 0.82:
             continue
         for x, y, face_width, face_height in faces:
             if face_width < 30 or face_height < 30:
                 continue
-            if not (0.25 * face_width <= palm <= 0.92 * face_width):
+            if not (0.28 * face_width <= palm <= 0.88 * face_width):
                 continue
-            # Require both fingertips strictly inside the upper forehead band
-            # so raising a hand beside the head or across the lower face does not fire early.
+            # BlazeFace's box starts near the eyebrows; keep the zone above the
+            # eyes and nose so touching the nose or cheek never triggers Goku.
             forehead = (
-                x + 0.08 * face_width, x + 0.92 * face_width,
-                y - 0.08 * face_height, y + 0.38 * face_height,
+                x + 0.12 * face_width, x + 0.88 * face_width,
+                y - 0.25 * face_height, y + 0.22 * face_height,
             )
             tips = points[[8, 12]]
             if (np.all((tips[:, 0] >= forehead[0]) & (tips[:, 0] <= forehead[1]))
