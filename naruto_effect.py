@@ -32,9 +32,9 @@ def joined_hands_from_landmarks(hands, width: int, height: int) -> bool:
                       max(1e-6, np.linalg.norm(directions[0]) * np.linalg.norm(directions[1])))
     fingertips = [hand[[8, 12, 16, 20]].mean(axis=0) for hand in points]
     return (
-        alignment > 0.25
-        and np.linalg.norm(palms[0] - palms[1]) < size * 1.55
-        and np.linalg.norm(fingertips[0] - fingertips[1]) < size * 1.9
+        alignment > 0.10
+        and np.linalg.norm(palms[0] - palms[1]) < size * 1.85
+        and np.linalg.norm(fingertips[0] - fingertips[1]) < size * 2.25
     )
 
 

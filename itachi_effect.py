@@ -60,15 +60,15 @@ def hands_touch_at_chest(hands, mask: np.ndarray) -> bool:
     palms = [p[[0, 5, 9, 13, 17]].mean(axis=0) for p in points]
     center = (palms[0] + palms[1]) * 0.5
     torso_center = x + width * 0.5
-    if (abs(center[0] - torso_center) > max(width * 0.23, height * 0.17)
-            or not y + height * 0.19 <= center[1] <= y + height * 0.79):
+    if (abs(center[0] - torso_center) > max(width * 0.28, height * 0.20)
+            or not y + height * 0.16 <= center[1] <= y + height * 0.85):
         return False
-    if np.linalg.norm(palms[0] - palms[1]) > size * 1.45:
+    if np.linalg.norm(palms[0] - palms[1]) > size * 1.65:
         return False
     # Fingertips or palm edges must meet. Wrist proximity alone is insufficient.
     contact = [4, 5, 8, 9, 12, 13, 16, 17, 20]
     distances = np.linalg.norm(points[0][contact, None] - points[1][None, contact], axis=2)
-    return float(np.min(distances)) <= size * 0.48
+    return float(np.min(distances)) <= size * 0.65
 
 
 class ItachiPoseRecognizer:
@@ -81,9 +81,6 @@ class ItachiPoseRecognizer:
         self.next_retry_ms = 0
 
     def _detect_fallback_crop(self, image: mp.Image, timestamp_ms: int) -> list | None:
-        if timestamp_ms < self.next_retry_ms:
-            return None
-        self.next_retry_ms = timestamp_ms + 170
         rgb = image.numpy_view()
         x1, x2 = round(image.width * 0.18), round(image.width * 0.82)
         y1, y2 = round(image.height * 0.16), round(image.height * 0.92)

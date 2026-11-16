@@ -1410,7 +1410,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             return cur_frame
         return cv2.flip(live, 1) if state.mirror else live
 
-    VANISHED_GESTURE_INTERVALS = {"snap": 0.16, "goku": 0.06, "itachi": 0.09}
+    VANISHED_GESTURE_INTERVALS = {"snap": 0.08, "goku": 0.06, "itachi": 0.06}
 
     try:
         while True:
@@ -1523,7 +1523,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                         touching = any(hands_touch_at_chest(c, mask) for c in itachi_candidates)
                     else:
                         touching = False
-                elif gesture_future is None and now - state.last_gesture_check >= 0.09:
+                elif gesture_future is None and now - state.last_gesture_check >= 0.06:
                     state.last_gesture_check = now
                     mp_image = to_gesture_mp_image(camera_frame)
                     if gesture_executor is not None and hasattr(recognizer, "detect_hands_candidates"):
@@ -1606,7 +1606,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     elif goku_gate.hold_started is None:
                         goku_countdown_remaining = None
 
-            snap_interval = 0.16 if state.phase == "vanished" else 0.05
+            snap_interval = 0.08 if state.phase == "vanished" else 0.04
             if mode == "snap" and background is not None and not state.gestures_paused and state.phase in ("ready", "vanished"):
                 snap_ready_res = None
                 snap_peace_res = None
@@ -1797,7 +1797,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     and mode in ("normal", "particles", "naruto")
                     and gesture_future is None
                     and now - state.last_gesture_check >=
-                    (0.08 if mode == "naruto" else GESTURE_INTERVAL_SECONDS)
+                    (0.05 if mode == "naruto" else 0.06)
                 ):
                     state.last_gesture_check = now
                     mp_image = to_gesture_mp_image(camera_frame)

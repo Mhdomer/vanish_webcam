@@ -66,11 +66,13 @@ class SnapPoseRecognizer:
         self.last_hand_count = 0
         self.snap_primed = False
         self.prime_time = 0.0
+        self.min_pinch_dist = 0.05
         self.last_snap_pos: tuple[int, int] = (0, 0)
 
     def reset(self) -> None:
         self.snap_primed = False
         self.prime_time = 0.0
+        self.min_pinch_dist = 0.05
 
     def detect_snap(
         self, image: mp.Image, timestamp_ms: int, width: int, height: int
@@ -80,20 +82,34 @@ class SnapPoseRecognizer:
         now = time.perf_counter()
 
         for landmarks in result.hand_landmarks:
+            wrist = landmarks[0]
             thumb = landmarks[4]
+            index = landmarks[8]
             middle = landmarks[12]
-            dist = math.hypot(thumb.x - middle.x, thumb.y - middle.y)
+            palm = max(0.08, math.hypot(wrist.x - landmarks[9].x, wrist.y - landmarks[9].y))
+            dist_mid = math.hypot(thumb.x - middle.x, thumb.y - middle.y)
+            dist_idx = math.hypot(thumb.x - index.x, thumb.y - index.y)
+            pinch_dist = min(dist_mid, dist_idx * 1.08)
             pos = (int(thumb.x * width), int(thumb.y * height))
-            if dist < 0.045:
+            pinch_threshold = max(0.065, palm * 0.48)
+            if pinch_dist < pinch_threshold:
+                if not self.snap_primed:
+                    self.min_pinch_dist = pinch_dist
+                else:
+                    self.min_pinch_dist = min(self.min_pinch_dist, pinch_dist)
                 self.snap_primed = True
                 self.prime_time = now
                 self.last_snap_pos = pos
                 return False, True, pos
-            if self.snap_primed and (now - self.prime_time < 0.35) and dist > 0.085:
-                self.snap_primed = False
-                return True, False, self.last_snap_pos
+            if self.snap_primed and (now - self.prime_time < 0.85):
+                release_threshold = max(0.068, self.min_pinch_dist * 1.42)
+                mid_to_wrist = math.hypot(middle.x - wrist.x, middle.y - wrist.y)
+                flicked_in = mid_to_wrist < palm * 0.92 and dist_mid > self.min_pinch_dist * 1.28
+                if dist_mid > release_threshold or flicked_in:
+                    self.snap_primed = False
+                    return True, False, self.last_snap_pos
 
-        if self.snap_primed and (now - self.prime_time > 0.4):
+        if self.snap_primed and (now - self.prime_time > 0.85):
             self.snap_primed = False
         return False, self.snap_primed, self.last_snap_pos
 
@@ -102,6 +118,17 @@ class SnapPoseRecognizer:
         self.last_hand_count = len(result.hand_landmarks)
         for lm in result.hand_landmarks:
             if lm[8].y < lm[6].y and lm[12].y < lm[10].y and lm[16].y > lm[14].y and lm[20].y > lm[18].y:
+                return True
+            w = lm[0]
+            d8 = math.hypot(lm[8].x - w.x, lm[8].y - w.y)
+            d6 = math.hypot(lm[6].x - w.x, lm[6].y - w.y)
+            d12 = math.hypot(lm[12].x - w.x, lm[12].y - w.y)
+            d10 = math.hypot(lm[10].x - w.x, lm[10].y - w.y)
+            d16 = math.hypot(lm[16].x - w.x, lm[16].y - w.y)
+            d14 = math.hypot(lm[14].x - w.x, lm[14].y - w.y)
+            d20 = math.hypot(lm[20].x - w.x, lm[20].y - w.y)
+            d18 = math.hypot(lm[18].x - w.x, lm[18].y - w.y)
+            if d8 > d6 * 1.12 and d12 > d10 * 1.12 and d16 < d14 * 1.05 and d20 < d18 * 1.05:
                 return True
         return False
 
