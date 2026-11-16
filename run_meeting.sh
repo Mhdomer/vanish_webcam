@@ -71,7 +71,7 @@ fi
 
 [[ " ${ARGS[*]} " == *" --mode "* ]] || ARGS+=(--mode naruto)
 [[ " ${ARGS[*]} " == *" --bg-delay "* ]] || ARGS+=(--bg-delay 7)
-[[ " ${ARGS[*]} " == *" --goku-delay "* ]] || ARGS+=(--goku-delay 0.15)
+[[ " ${ARGS[*]} " == *" --goku-delay "* ]] || ARGS+=(--goku-delay 0.30)
 [[ " ${ARGS[*]} " == *" --async-gestures "* ]] || ARGS+=(--async-gestures)
 [[ " ${ARGS[*]} " == *" --preview-hud "* ]] || ARGS+=(--preview-hud)
 

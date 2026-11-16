@@ -41,28 +41,30 @@ def fingers_on_forehead(hands, faces, width: int, height: int) -> bool:
                    np.linalg.norm(points[0] - points[9]))
         if palm < 10:
             continue
-        if not (_finger_straight(points, (5, 6, 7, 8), 0.72)
-                and _finger_straight(points, (9, 10, 11, 12), 0.72)):
+        if not (_finger_straight(points, (5, 6, 7, 8), 0.76)
+                and _finger_straight(points, (9, 10, 11, 12), 0.76)):
             continue
-        if _finger_straight(points, (13, 14, 15, 16), 0.84) or _finger_straight(points, (17, 18, 19, 20), 0.84):
+        if _finger_straight(points, (13, 14, 15, 16), 0.78) or _finger_straight(points, (17, 18, 19, 20), 0.78):
             continue
-        if np.linalg.norm(points[8] - points[12]) > palm * 0.62:
+        if np.linalg.norm(points[8] - points[12]) > palm * 0.48:
             continue
         index_direction = points[8] - points[5]
         middle_direction = points[12] - points[9]
         alignment = np.dot(index_direction, middle_direction) / max(
             np.linalg.norm(index_direction) * np.linalg.norm(middle_direction), 1e-6,
         )
-        if alignment < 0.68:
+        if alignment < 0.78:
             continue
         for x, y, face_width, face_height in faces:
             if face_width < 30 or face_height < 30:
                 continue
-            # BlazeFace's box encloses the upper face; allow a little room at
-            # the hairline and temples for either hand and camera mirroring.
+            if not (0.25 * face_width <= palm <= 0.92 * face_width):
+                continue
+            # Require both fingertips strictly inside the upper forehead band
+            # so raising a hand beside the head or across the lower face does not fire early.
             forehead = (
-                x - 0.25 * face_width, x + 1.25 * face_width,
-                y - 0.22 * face_height, y + 0.58 * face_height,
+                x + 0.08 * face_width, x + 0.92 * face_width,
+                y - 0.08 * face_height, y + 0.38 * face_height,
             )
             tips = points[[8, 12]]
             if (np.all((tips[:, 0] >= forehead[0]) & (tips[:, 0] <= forehead[1]))
