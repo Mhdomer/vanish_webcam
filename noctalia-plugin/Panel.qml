@@ -48,7 +48,7 @@ Item {
         { id: "normal", label: "Dissolve", vanishHint: "Peace sign", reappearHint: "Button / R" },
         { id: "particles", label: "Particles", vanishHint: "Peace sign", reappearHint: "Button / R" },
         { id: "itachi", label: "Itachi Crows", vanishHint: "Hands at chest", reappearHint: "Hands at chest / R" },
-        { id: "goku", label: "Goku Teleport", vanishHint: "Forehead 1s", reappearHint: "Forehead 1s / R" }
+        { id: "goku", label: "Goku Teleport", vanishHint: "Forehead tap", reappearHint: "Forehead tap / R" }
     ]
     readonly property var modesModel: (mainInstance && mainInstance.modesModel && mainInstance.modesModel.length > 0)
         ? mainInstance.modesModel

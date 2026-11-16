@@ -670,19 +670,9 @@ def make_ghost_sample(frame: np.ndarray, max_width: int = 640) -> np.ndarray:
     return np.ascontiguousarray(sample)
 
 
-def to_gesture_mp_image(frame: np.ndarray, max_width: int = 640) -> mp.Image:
-    """Convert a BGR frame to an RGB MediaPipe Image, downscaling large frames to cut gesture CPU."""
-    h, w = frame.shape[:2]
-    if w > max_width:
-        scale = max_width / float(w)
-        small = cv2.resize(
-            frame,
-            (max_width, max(1, int(round(h * scale)))),
-            interpolation=cv2.INTER_AREA,
-        )
-        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-    else:
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+def to_gesture_mp_image(frame: np.ndarray) -> mp.Image:
+    """Convert a full-resolution BGR frame to an RGB MediaPipe Image for maximum landmark accuracy."""
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
 
@@ -1080,8 +1070,8 @@ def run(license_session=None) -> int:
     if mode == "goku":
         if getattr(args, "goku_delay", None) is not None:
             pass
-        elif getattr(args, "no_preview", False) or getattr(args, "reuse_bg", False):
-            args.goku_delay = HOLD_SECONDS
+        elif getattr(args, "no_preview", False) or getattr(args, "reuse_bg", False) or getattr(args, "preview_hud", False):
+            args.goku_delay = 0.15
         else:
             args.goku_delay = choose_goku_delay(check_license=check) if check else choose_goku_delay()
             if args.goku_delay is None:
@@ -1149,7 +1139,8 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
     itachi_effect: ItachiCrowEffect | None = None
     itachi_gate = ItachiGestureGate() if mode == "itachi" else None
     goku_effect: GokuTeleport | None = None
-    goku_delay = getattr(args,"goku_delay",HOLD_SECONDS)
+    default_goku_delay = 0.15 if getattr(args, "preview_hud", False) else HOLD_SECONDS
+    goku_delay = getattr(args, "goku_delay", None) or default_goku_delay
     goku_gate = GokuGestureGate(hold_seconds=goku_delay) if mode == "goku" else None
     goku_countdown_remaining: float | None = None
     snap_effect: SnapVoidEffect | None = None
@@ -1419,7 +1410,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
             return cur_frame
         return cv2.flip(live, 1) if state.mirror else live
 
-    VANISHED_GESTURE_INTERVALS = {"snap": 0.16, "goku": 0.10, "itachi": 0.09}
+    VANISHED_GESTURE_INTERVALS = {"snap": 0.16, "goku": 0.06, "itachi": 0.09}
 
     try:
         while True:
@@ -1571,7 +1562,7 @@ def run_camera(args: argparse.Namespace, resources: ExitStack, mode: str, licens
                     gesture_future = None
                     future_mp_image = None
                     future_frame = None
-                elif gesture_future is None and now - state.last_gesture_check >= 0.10:
+                elif gesture_future is None and now - state.last_gesture_check >= 0.06:
                     state.last_gesture_check = now
                     mp_image = to_gesture_mp_image(camera_frame)
                     if gesture_executor is not None:

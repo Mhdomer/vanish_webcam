@@ -36,7 +36,7 @@ Item {
         { id: "normal", label: "Dissolve", shortLabel: "NORM", vanishHint: "Peace sign", reappearHint: "Button / R", icon: "wand" },
         { id: "particles", label: "Particles", shortLabel: "PART", vanishHint: "Peace sign", reappearHint: "Button / R", icon: "atom" },
         { id: "itachi", label: "Itachi Crows", shortLabel: "ITAC", vanishHint: "Hands at chest", reappearHint: "Hands at chest / R", icon: "feather" },
-        { id: "goku", label: "Goku Teleport", shortLabel: "GOKU", vanishHint: "Forehead 1s", reappearHint: "Forehead 1s / R", icon: "bolt" }
+        { id: "goku", label: "Goku Teleport", shortLabel: "GOKU", vanishHint: "Forehead tap", reappearHint: "Forehead tap / R", icon: "bolt" }
     ]
 
     FileView {

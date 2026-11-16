@@ -17,10 +17,14 @@ SNAP_SECONDS = 0.045
 TRACKING_GRACE_SECONDS = 0.40
 
 
-def _finger_straight(points: np.ndarray, joints: tuple[int, int, int, int]) -> bool:
+def _finger_straight(
+    points: np.ndarray,
+    joints: tuple[int, int, int, int],
+    threshold: float = 0.72,
+) -> bool:
     chain = points[list(joints)]
     length = np.linalg.norm(np.diff(chain, axis=0), axis=1).sum()
-    return length > 1e-6 and np.linalg.norm(chain[-1] - chain[0]) / length > 0.76
+    return length > 1e-6 and np.linalg.norm(chain[-1] - chain[0]) / length > threshold
 
 
 def fingers_on_forehead(hands, faces, width: int, height: int) -> bool:
@@ -37,19 +41,19 @@ def fingers_on_forehead(hands, faces, width: int, height: int) -> bool:
                    np.linalg.norm(points[0] - points[9]))
         if palm < 10:
             continue
-        if not (_finger_straight(points, (5, 6, 7, 8))
-                and _finger_straight(points, (9, 10, 11, 12))):
+        if not (_finger_straight(points, (5, 6, 7, 8), 0.72)
+                and _finger_straight(points, (9, 10, 11, 12), 0.72)):
             continue
-        if _finger_straight(points, (13, 14, 15, 16)) or _finger_straight(points, (17, 18, 19, 20)):
+        if _finger_straight(points, (13, 14, 15, 16), 0.84) or _finger_straight(points, (17, 18, 19, 20), 0.84):
             continue
-        if np.linalg.norm(points[8] - points[12]) > palm * 0.52:
+        if np.linalg.norm(points[8] - points[12]) > palm * 0.62:
             continue
         index_direction = points[8] - points[5]
         middle_direction = points[12] - points[9]
         alignment = np.dot(index_direction, middle_direction) / max(
             np.linalg.norm(index_direction) * np.linalg.norm(middle_direction), 1e-6,
         )
-        if alignment < 0.75:
+        if alignment < 0.68:
             continue
         for x, y, face_width, face_height in faces:
             if face_width < 30 or face_height < 30:
@@ -57,8 +61,8 @@ def fingers_on_forehead(hands, faces, width: int, height: int) -> bool:
             # BlazeFace's box encloses the upper face; allow a little room at
             # the hairline and temples for either hand and camera mirroring.
             forehead = (
-                x - 0.18 * face_width, x + 1.18 * face_width,
-                y - 0.16 * face_height, y + 0.46 * face_height,
+                x - 0.25 * face_width, x + 1.25 * face_width,
+                y - 0.22 * face_height, y + 0.58 * face_height,
             )
             tips = points[[8, 12]]
             if (np.all((tips[:, 0] >= forehead[0]) & (tips[:, 0] <= forehead[1]))
@@ -142,9 +146,8 @@ class GokuPoseRecognizer:
         self.last_hand_count = len(hands)
         if fingers_on_forehead(hands, self._faces, image.width, image.height):
             return True
-        if self.fallback_hand_detector is None or timestamp_ms < self._next_retry_ms:
+        if self.fallback_hand_detector is None:
             return False
-        self._next_retry_ms = timestamp_ms + 150
         x, y, width, height = max(self._faces, key=lambda face: face[2] * face[3])
         left = max(0, round(x - width * 0.55))
         top = max(0, round(y - height * 0.40))

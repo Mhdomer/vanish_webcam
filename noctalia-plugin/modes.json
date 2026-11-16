@@ -43,8 +43,8 @@
     "id": "goku",
     "label": "Goku Teleport",
     "shortLabel": "GOKU",
-    "vanishHint": "Forehead 1s",
-    "reappearHint": "Forehead 1s / R",
+    "vanishHint": "Forehead tap",
+    "reappearHint": "Forehead tap / R",
     "icon": "bolt"
   }
 ]
